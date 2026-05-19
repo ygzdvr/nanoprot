@@ -1,0 +1,62 @@
+# ESM-2 small (~8M parameter scale): depth=6, d_model=320, n_heads=20.
+# Bidirectional encoder trained with BERT-style masked LM (15% / 80/10/10).
+# Tokenizer is the 33-symbol ESM-2 alphabet.
+
+name: nanoprot-esm2-8M-uniref50
+seed: 42
+
+model:
+  arch: esm2
+  depth: 6                # 6 * 40 = 240 -> rounds up to 256; default head_dim=64 -> n_heads=4
+  d_model: 320            # explicit override to match ESM-2 8M (rather than the derived 256)
+  n_heads: 20             # ESM-2 uses 20-head, 16-dim heads (320/20=16)
+  head_dim: 16
+  max_seq_len: 1024
+  vocab_size: 33
+  layer_norm: layernorm
+  mlp_activation: gelu
+
+tokenizer:
+  name: esm2
+
+data:
+  dataset: uniref50
+  shard_dir: ${NANOPROT_BASE_DIR}/uniref50_parquet
+  packing: bos_aligned_best_fit
+  val_shard: last
+
+optimizer:
+  name: muon_adamw
+  matrix_lr: 0.02
+  embedding_lr: 0.3
+  unembedding_lr: 0.008
+  scalar_lr: 0.5
+  weight_decay: 0.01
+
+training:
+  objective: mlm
+  mlm_probability: 0.15
+  total_residues: null          # null = derive from param_data_ratio * params
+  param_data_ratio: 12
+  total_batch_size: 524288
+  device_batch_size: 16
+  warmup_steps: 40
+  warmdown_ratio: 0.65
+  final_lr_frac: 0.05
+  precision: bf16
+  flash_attention: true
+
+eval:
+  eval_every: 250
+  eval_tokens: 41943040          # 80 * 524288
+  metric: bpr
+
+logging:
+  run_name: esm2-8M
+  wandb_project: nanoprot
+  wandb_mode: offline
+
+checkpointing:
+  output_dir: ${NANOPROT_BASE_DIR}/checkpoints/esm2_8M
+  save_every: -1
+  save_steps: []

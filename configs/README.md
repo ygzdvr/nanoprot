@@ -55,12 +55,17 @@ config-load time.
 
 ## Presets
 
-| File | Scale | Intended use |
-|---|---|---|
-| `gpt2_d20_uniref50.yaml` | 1.17 B params | The reference `nanoprot-d20` training run |
+| File | Arch | Scale | Objective | Intended use |
+|---|---|---|---|---|
+| `gpt2_d20_uniref50.yaml` | gpt2 | 1.17 B | AR (next-residue) | Reference `nanoprot-d20` training run |
+| `esm2_8M_uniref50.yaml` | esm2 | ~8 M | MLM (15%/80/10/10) | Smallest ESM-2-class encoder for fast iteration |
+| `esm2_650M_uniref50.yaml` | esm2 | ~650 M | MLM (15%/80/10/10) | Matches facebook/esm2_t33_650M_UR50D footprint |
 
-More presets land alongside their model architectures (v0.2 adds ESM-2
-configs, v0.3 adds Mamba/SSM configs).
+Each preset specifies its own `model.arch` (gpt2 or esm2), its own
+`training.objective` (ar or mlm), and the matching `tokenizer.name`. The
+training entry point dispatches the data loader and tokenizer accordingly,
+so the only thing the user needs to change to switch architectures is the
+config path.
 
 ## Inspecting a config without running training
 

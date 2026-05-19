@@ -2,22 +2,20 @@
 nanoprot.training.loop — the end-to-end training loop.
 
 Takes a fully-derived :class:`nanoprot.config.NanoprotConfig` and runs a
-training job: builds the model, sets up the optimizer, opens the data
-loader, drives the schedule, and writes checkpoints. The same function
-works under both single-process and torchrun-driven DDP launches.
+training job: builds the model, sets up the optimizer, opens the train +
+val data loaders (objective-aware), drives the schedule, runs periodic
+evaluation, and writes checkpoints. The same function works under both
+single-process and torchrun-driven DDP launches.
 
-Most of the engineering complexity lives in the imported modules
-(:mod:`nanoprot.models`, :mod:`nanoprot.optim`, :mod:`nanoprot.data`,
-:mod:`nanoprot.eval`, :mod:`nanoprot.training.checkpoint`); this file
-ties them together with the configuration.
-
-For tests, callers may supply a ``train_loader`` directly (an iterator
-yielding ``(idx, targets)`` tensors on ``device``); when omitted, the
-real UniRef50 packing loader is constructed from the config.
+For tests, callers may supply ``train_loader=`` and/or ``val_loader=``
+directly (iterators yielding ``(idx, targets)`` tensors on ``device``);
+when omitted, the real loaders are constructed via
+:func:`nanoprot.data.builder.build_data_loader` from the config.
 """
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass
 from typing import Iterator, Optional, Tuple
@@ -25,6 +23,7 @@ from typing import Iterator, Optional, Tuple
 import torch
 
 from nanoprot.config import NanoprotConfig
+from nanoprot.data.builder import build_data_loader
 from nanoprot.models import build_model
 from nanoprot.runtime import (
     COMPUTE_DTYPE,
@@ -69,7 +68,34 @@ class TrainState:
 
     step: int = 0
     smooth_loss: float = 0.0
+    last_val_loss: Optional[float] = None
+    last_val_bpr: Optional[float] = None
     best_val_bpr: float = float("inf")
+
+
+# ---------------------------------------------------------------------------
+# Evaluation
+# ---------------------------------------------------------------------------
+
+@torch.no_grad()
+def evaluate(
+    model: torch.nn.Module,
+    val_loader: Iterator[Tuple[torch.Tensor, torch.Tensor]],
+    num_batches: int,
+) -> float:
+    """Run ``num_batches`` validation steps and return mean loss."""
+    if num_batches <= 0:
+        return float("nan")
+    was_training = model.training
+    model.eval()
+    losses = []
+    for _ in range(num_batches):
+        idx, targets = next(val_loader)
+        loss = model(idx, targets=targets)
+        losses.append(float(loss.detach()))
+    if was_training:
+        model.train()
+    return sum(losses) / len(losses)
 
 
 # ---------------------------------------------------------------------------
@@ -81,6 +107,7 @@ def train(
     *,
     device_type: Optional[str] = None,
     train_loader: Optional[Iterator[Tuple[torch.Tensor, torch.Tensor]]] = None,
+    val_loader: Optional[Iterator[Tuple[torch.Tensor, torch.Tensor]]] = None,
 ) -> TrainState:
     """Run a nanoprot training job described by ``cfg``.
 
@@ -91,16 +118,16 @@ def train(
         one is :func:`nanoprot.config.load_config`.
     device_type : str, optional
         ``cuda``, ``mps``, or ``cpu``. If ``None``, autodetected.
-    train_loader : iterator, optional
-        Iterator yielding ``(idx, targets)`` tensors already on the training
-        device. When ``None`` (default), the real UniRef50 packing loader is
-        constructed from the config. Used by tests to inject synthetic data
-        without touching the disk.
+    train_loader, val_loader : iterator, optional
+        Iterators yielding ``(idx, targets)`` tensors already on the training
+        device. When ``None``, the real loaders are constructed via the
+        data-builder dispatch (objective- and tokenizer-aware). Used by
+        tests to inject synthetic data without touching the disk.
 
     Returns
     -------
     TrainState
-        The final training state (last step, smoothed loss).
+        Final training state (step, smoothed loss, latest val loss/bpr).
     """
     # ---- Device + DDP init -------------------------------------------------
     if device_type is None:
@@ -116,7 +143,8 @@ def train(
     # ---- Build model on meta device, then materialise ---------------------
     print0(
         f"Building model: arch={cfg.model.arch}, depth={cfg.model.depth}, "
-        f"d_model={cfg.model.d_model}, n_heads={cfg.model.n_heads}"
+        f"d_model={cfg.model.d_model}, n_heads={cfg.model.n_heads}, "
+        f"objective={cfg.training.objective}"
     )
     print0(f"COMPUTE_DTYPE: {COMPUTE_DTYPE} ({COMPUTE_DTYPE_REASON})")
     with torch.device("meta"):
@@ -155,22 +183,11 @@ def train(
         scalar_lr=cfg.optimizer.scalar_lr,
     )
 
-    # ---- Data loader (real or injected) -----------------------------------
+    # ---- Data loaders (real or injected) -----------------------------------
     if train_loader is None:
-        # Lazy imports so config-only tests don't need data/tokenizer deps.
-        from nanoprot.data.dataloader import tokenizing_distributed_data_loader_bos_bestfit
-        from nanoprot.tokenizers.bpe import get_protein_tokenizer
-
-        tokenizer = get_protein_tokenizer()
-        print0(f"Tokenizer ready (vocab={tokenizer.get_vocab_size()})")
-
-        train_loader = tokenizing_distributed_data_loader_bos_bestfit(
-            tokenizer,
-            cfg.training.device_batch_size,
-            cfg.model.max_seq_len,
-            split="train",
-            device=str(device),
-        )
+        train_loader = build_data_loader(cfg, split="train", device=str(device))
+    if val_loader is None and cfg.eval.eval_every > 0:
+        val_loader = build_data_loader(cfg, split="val", device=str(device))
 
     # ---- Wandb (optional) --------------------------------------------------
     if master and cfg.logging.wandb_mode != "disabled":
@@ -197,6 +214,9 @@ def train(
         f"World tokens per fwd+bwd: {world_tokens_per_fwdbwd:,}; "
         f"gradient accumulation = {grad_accum_steps}"
     )
+
+    # Number of val batches per eval pass (derived from eval_tokens).
+    eval_batches = max(cfg.eval.eval_tokens // max(world_tokens_per_fwdbwd, 1), 1)
 
     model.train()
     for step in range(num_iterations):
@@ -247,7 +267,35 @@ def train(
                 }
             )
 
-        # Periodic checkpoint (mid-training)
+        # Periodic evaluation
+        if (
+            cfg.eval.eval_every > 0
+            and val_loader is not None
+            and step > 0
+            and step % cfg.eval.eval_every == 0
+        ):
+            val_loss = evaluate(model, val_loader, eval_batches)
+            # bits-per-residue: loss is natural-log cross-entropy; convert to bits.
+            val_bpr = val_loss / math.log(2)
+            state.last_val_loss = val_loss
+            state.last_val_bpr = val_bpr
+            if val_bpr < state.best_val_bpr:
+                state.best_val_bpr = val_bpr
+            if master:
+                print0(
+                    f"  [eval] step {step}: val_loss={val_loss:.4f} "
+                    f"val_bpr={val_bpr:.4f} (best={state.best_val_bpr:.4f})"
+                )
+                wandb_run.log(
+                    {
+                        "step": step,
+                        "val_loss": val_loss,
+                        "val_bpr": val_bpr,
+                        "best_val_bpr": state.best_val_bpr,
+                    }
+                )
+
+        # Periodic checkpoint
         if (
             cfg.checkpointing.save_every > 0
             and step > 0
@@ -255,7 +303,28 @@ def train(
         ):
             _save(cfg, step, model, optimizer, state, rank, num_iterations)
 
-    # ---- Final checkpoint --------------------------------------------------
+    # ---- Final eval + checkpoint -------------------------------------------
+    if val_loader is not None and cfg.eval.eval_every > 0:
+        val_loss = evaluate(model, val_loader, eval_batches)
+        val_bpr = val_loss / math.log(2)
+        state.last_val_loss = val_loss
+        state.last_val_bpr = val_bpr
+        if val_bpr < state.best_val_bpr:
+            state.best_val_bpr = val_bpr
+        if master:
+            print0(
+                f"  [final eval] val_loss={val_loss:.4f} val_bpr={val_bpr:.4f} "
+                f"(best={state.best_val_bpr:.4f})"
+            )
+            wandb_run.log(
+                {
+                    "step": num_iterations,
+                    "val_loss": val_loss,
+                    "val_bpr": val_bpr,
+                    "best_val_bpr": state.best_val_bpr,
+                }
+            )
+
     _save(cfg, num_iterations, model, optimizer, state, rank, num_iterations)
 
     if not isinstance(wandb_run, DummyWandb):
@@ -282,10 +351,14 @@ def _save(
     meta = {
         "step": step,
         "smooth_loss": state.smooth_loss,
+        "last_val_loss": state.last_val_loss,
+        "last_val_bpr": state.last_val_bpr,
+        "best_val_bpr": state.best_val_bpr,
         "num_iterations": num_iterations,
         "model_config": cfg.model.model_dump(),
         "training_config": cfg.training.model_dump(),
         "name": cfg.name,
+        "version": "0.3.0",
     }
     save_checkpoint(
         cfg.checkpointing.output_dir,

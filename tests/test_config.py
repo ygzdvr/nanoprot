@@ -9,6 +9,8 @@ import yaml
 from pydantic import ValidationError
 
 from nanoprot.config import (
+    Esm2ModelConfig,
+    Gpt2ModelConfig,
     NanoprotConfig,
     dump_config,
     load_config,
@@ -251,3 +253,117 @@ class TestDumpConfigRoundTrip:
         out = tmp_path / "nested" / "dir" / "cfg.yaml"
         dump_config(cfg, out)
         assert out.is_file()
+
+
+# ---------------------------------------------------------------------------
+# Discriminated-union and ESM-2 model config
+# ---------------------------------------------------------------------------
+
+class TestDiscriminatedUnion:
+    def test_missing_arch_defaults_to_gpt2_via_load_config(self, tmp_path: Path) -> None:
+        # Older configs without an explicit arch should still parse as gpt2.
+        path = tmp_path / "no_arch.yaml"
+        path.write_text(yaml.safe_dump(_minimal_config_dict()))
+        cfg = load_config(path)
+        assert isinstance(cfg.model, Gpt2ModelConfig)
+
+    def test_explicit_esm2_arch_yields_esm2_config(self, tmp_path: Path) -> None:
+        d = _minimal_config_dict()
+        d["model"] = {"arch": "esm2", "depth": 6}
+        path = tmp_path / "esm2.yaml"
+        path.write_text(yaml.safe_dump(d))
+        cfg = load_config(path)
+        assert isinstance(cfg.model, Esm2ModelConfig)
+        # ESM-2 has different defaults
+        assert cfg.model.vocab_size == 33
+        assert cfg.model.head_dim == 64
+
+    def test_unknown_arch_rejected_by_discriminator(self) -> None:
+        d = _minimal_config_dict()
+        d["model"] = {"arch": "made_up", "depth": 4}
+        with pytest.raises(ValidationError):
+            NanoprotConfig(**d)
+
+    def test_gpt2_window_pattern_not_on_esm2(self) -> None:
+        # ``window_pattern`` is gpt2-only; ESM-2 config should reject it via extra="forbid".
+        d = _minimal_config_dict()
+        d["model"] = {"arch": "esm2", "depth": 6, "window_pattern": "SSL"}
+        with pytest.raises(ValidationError):
+            NanoprotConfig(**d)
+
+
+class TestEsm2Derivation:
+    def test_d_model_uses_40_per_depth_multiplier(self) -> None:
+        d = _minimal_config_dict()
+        d["model"] = {"arch": "esm2", "depth": 8}
+        cfg = NanoprotConfig(**d)
+        # 8 * 40 = 320, already a multiple of head_dim=64
+        assert cfg.model.d_model == 320
+
+    def test_d_model_rounds_up_to_head_dim(self) -> None:
+        d = _minimal_config_dict()
+        d["model"] = {"arch": "esm2", "depth": 5, "head_dim": 64}
+        cfg = NanoprotConfig(**d)
+        # 5 * 40 = 200, rounds up to 256 (next multiple of 64)
+        assert cfg.model.d_model == 256
+        assert cfg.model.n_heads == 4
+
+    def test_estimate_params_does_not_include_value_embeddings_for_esm2(self) -> None:
+        # ESM-2 has no ResFormer value embeddings, so the closed-form estimate
+        # is just the core transformer + token embedding + lm_head.
+        d = _minimal_config_dict()
+        d["model"] = {"arch": "esm2", "depth": 6}
+        cfg = NanoprotConfig(**d)
+        # Compute expected lower bound (just core + embeddings, no ve term).
+        m = cfg.model
+        assert m.d_model is not None
+        expected = 12 * m.d_model * m.d_model * m.depth + 2 * m.vocab_size * m.d_model
+        assert cfg.estimate_params() == expected
+
+
+# ---------------------------------------------------------------------------
+# Training-objective field
+# ---------------------------------------------------------------------------
+
+class TestTrainingObjective:
+    def test_default_objective_is_ar(self) -> None:
+        cfg = NanoprotConfig(**_minimal_config_dict())
+        assert cfg.training.objective == "ar"
+
+    def test_objective_mlm_accepted(self) -> None:
+        d = _minimal_config_dict()
+        d["training"] = {"objective": "mlm", "mlm_probability": 0.2}
+        cfg = NanoprotConfig(**d)
+        assert cfg.training.objective == "mlm"
+        assert abs(cfg.training.mlm_probability - 0.2) < 1e-9
+
+    def test_invalid_objective_rejected(self) -> None:
+        d = _minimal_config_dict()
+        d["training"] = {"objective": "contrastive"}
+        with pytest.raises(ValidationError):
+            NanoprotConfig(**d)
+
+    def test_mlm_probability_must_be_in_open_unit_interval(self) -> None:
+        for bad in (0.0, 1.0, 1.5, -0.1):
+            d = _minimal_config_dict()
+            d["training"] = {"objective": "mlm", "mlm_probability": bad}
+            with pytest.raises(ValidationError):
+                NanoprotConfig(**d)
+
+
+class TestTokenizerDispatch:
+    def test_default_tokenizer_is_bpe(self) -> None:
+        cfg = NanoprotConfig(**_minimal_config_dict())
+        assert cfg.tokenizer.name == "bpe"
+
+    def test_esm2_tokenizer_accepted(self) -> None:
+        d = _minimal_config_dict()
+        d["tokenizer"] = {"name": "esm2"}
+        cfg = NanoprotConfig(**d)
+        assert cfg.tokenizer.name == "esm2"
+
+    def test_unknown_tokenizer_rejected(self) -> None:
+        d = _minimal_config_dict()
+        d["tokenizer"] = {"name": "sentencepiece"}
+        with pytest.raises(ValidationError):
+            NanoprotConfig(**d)

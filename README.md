@@ -8,14 +8,13 @@ protein language models: clean training code, multiple architectures, dense
 checkpoint sweeps, and pretrained model releases small enough that a single
 research group can re-train them.
 
-> Status: **v0.2.1 — runnable training loop, validated end-to-end on CPU.**
-> Patch over v0.2 that fixed the `save_checkpoint` and dataloader signature
-> mismatches, wired `training.precision` and `training.flash_attention` from
-> the YAML config through to the runtime, and added an end-to-end CPU
-> integration test. GPT-2-style decoder, Muon+AdamW optimizer, BPE tokenizer,
-> packing-aware UniRef50 loader, FlashAttention-3 (with SDPA fallback),
-> checkpointing, and single-node DDP via torchrun. See the
-> [roadmap](#roadmap) for what lands next.
+> Status: **v0.3.0 — multi-architecture release.** Both GPT-2-style
+> autoregressive decoders and ESM-2-style masked-LM encoders, each fully
+> driven from a single YAML config (`arch: gpt2|esm2`, `objective: ar|mlm`,
+> `tokenizer: bpe|esm2`). Eval loop wired in (val_bpr + best_val_bpr tracked
+> across training). Periodic + final checkpointing. Single-node DDP via
+> torchrun. 80 unit + integration tests. See the [roadmap](#roadmap) for
+> what lands next.
 
 ---
 
@@ -56,46 +55,46 @@ checkpointing:
 That's a complete config. Everything else picks up sensible defaults from
 `nanoprot/config.py`.
 
-## What's in v0.2
+## What's in v0.3
 
 ```
 nanoprot/
 ├── nanoprot/
 │   ├── __init__.py
-│   ├── config.py              Pydantic schema + YAML loader + derivation rules
+│   ├── config.py              Pydantic schema with discriminated-union ModelConfig
 │   ├── runtime.py             device + dtype detection, DDP init, logging
-│   ├── attention.py           FlashAttention-3 wrapper with SDPA fallback
+│   ├── attention.py           FA3 wrapper + SDPA fallback (causal + bidirectional)
 │   ├── optim.py               Muon + AdamW (single-process + DDP variants)
 │   ├── models/
 │   │   ├── __init__.py        model registry (build_model, register_model)
-│   │   └── gpt2.py            decoder-only GPT-2-style transformer
+│   │   ├── gpt2.py            decoder-only GPT-2-style transformer (AR)
+│   │   └── esm2.py            ESM-2-style encoder-only transformer (MLM)
 │   ├── tokenizers/
-│   │   ├── bpe.py             BPE tokenizer (protein-adapted)
-│   │   └── residue.py         single-letter residue tokenizer alternative
+│   │   ├── bpe.py             BPE tokenizer (UniRef50, V=50,256)
+│   │   ├── residue.py         single-letter residue tokenizer alternative
+│   │   └── esm2.py            33-token ESM-2 alphabet (matches the public release)
 │   ├── data/
 │   │   ├── dataset.py         UniRef50 parquet shard reader
-│   │   └── dataloader.py      BOS-aligned best-fit packing loader
+│   │   ├── dataloader.py      BOS-aligned best-fit AR packing loader
+│   │   ├── mlm.py             BERT-style MLM masking (15% / 80/10/10)
+│   │   └── builder.py         objective + tokenizer dispatch (build_data_loader)
 │   ├── training/
-│   │   ├── loop.py            end-to-end training loop (config -> trained model)
+│   │   ├── loop.py            end-to-end loop with eval (config -> trained model)
 │   │   └── checkpoint.py      save/load model + optimizer + meta
 │   └── eval/
-│       ├── loss.py            evaluate_bpb (bits-per-byte / bits-per-residue)
+│       ├── loss.py            bits-per-byte / bits-per-residue eval
 │       └── protein.py         protein-specific eval (validity, AA freq)
 ├── configs/
 │   ├── README.md              config-system docs
-│   └── gpt2_d20_uniref50.yaml reference nanoprot-d20 run config
+│   ├── gpt2_d20_uniref50.yaml  reference 1.17 B-param AR run (gpt2 + bpe + AR)
+│   ├── esm2_8M_uniref50.yaml   smallest ESM-2 scale (esm2 + esm2 tokenizer + MLM)
+│   └── esm2_650M_uniref50.yaml matches facebook/esm2_t33_650M_UR50D footprint
 ├── scripts/
 │   ├── train.py               training entry point (single GPU or torchrun)
 │   └── show_config.py         load + inspect any config (no training)
-├── tests/
-│   ├── test_config.py         19 tests for the schema + derivation
-│   └── test_model.py          6 tests for the model registry + forward pass
-├── pyproject.toml             uv-managed Python project (pydantic + pyyaml + torch)
-└── LICENSE
+├── tests/                     80 tests; 9 of them exercise the loop end-to-end
+└── pyproject.toml             uv-managed (pydantic + pyyaml + torch)
 ```
-
-The framework now does end-to-end training. ESM-2 and Mamba architectures
-land in v0.3 and v0.4 respectively.
 
 ## Quickstart
 
@@ -108,17 +107,27 @@ pip install -e ".[dev]"
 
 # sanity-check a config (no training, no GPU needed)
 python -m scripts.show_config configs/gpt2_d20_uniref50.yaml --estimate
+python -m scripts.show_config configs/esm2_650M_uniref50.yaml --estimate
 
-# run the test suite (24 unit tests + 1 forward-pass smoke test)
-pytest
+# run the test suite (80 tests; ~50 fast in ~10s, ~9 end-to-end in ~2 min)
+pytest -m "not slow"        # fast only
+pytest                       # all
 
-# launch training: single device
+# launch training, single device (autoregressive GPT-2):
 python -m scripts.train --config configs/gpt2_d20_uniref50.yaml
 
-# launch training: torchrun on 8 GPUs
+# launch training, single device (masked-LM ESM-2):
+python -m scripts.train --config configs/esm2_650M_uniref50.yaml
+
+# launch training, torchrun on 8 GPUs:
 OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 \\
-    -m scripts.train -- --config configs/gpt2_d20_uniref50.yaml
+    -m scripts.train -- --config configs/esm2_650M_uniref50.yaml
 ```
+
+Swapping between architectures is purely a config change. The training
+loop dispatches the right data loader (`ar` -> AR packing; `mlm` ->
+packing + 15% / 80/10/10 BERT masking) and the right tokenizer
+(`bpe` -> UniRef50 BPE V=50,256; `esm2` -> 33-token ESM-2 alphabet).
 
 Expected output of `show_config --estimate`:
 
@@ -146,9 +155,9 @@ that is printed once the model is instantiated in v0.2.)
 |---|---|---|
 | **v0.1** | shipped | Config schema, YAML loader, derivation rules, example config, tests |
 | **v0.2** | shipped | GPT-2 model, BPE tokenizer, UniRef50 packing loader, Muon+AdamW optimizer, FA3 with SDPA fallback, training loop, checkpointing, single-node DDP via torchrun |
-| **v0.2.1** | **shipped** | Patches: fixed `save_checkpoint` + dataloader signature regressions, wired `training.precision` and `training.flash_attention` through, added CPU end-to-end integration test, dump_config round-trip, seed inheritance, improved closed-form parameter estimate (includes value embeddings) |
-| **v0.3** | next | ESM-2-style masked encoder as a second architecture |
-| **v0.4** | next+1 | Mamba / SSM as a third architecture |
+| **v0.2.1** | shipped | Patches: fixed `save_checkpoint` + dataloader signature regressions, wired `training.precision` and `training.flash_attention` through, added CPU end-to-end integration test, dump_config round-trip, seed inheritance, improved closed-form parameter estimate (includes value embeddings) |
+| **v0.3** | **shipped** | Discriminated-union `ModelConfig` (gpt2 \| esm2), ESM-2 encoder model + 33-token ESM-2 tokenizer, BERT-style MLM data loader (15% / 80/10/10), `training.objective` (ar \| mlm) loop dispatch, eval loop integration (val_bpr + best_val_bpr), bidirectional-attention SDPA path, 80 tests total, ESM-2 8M + 650M config presets |
+| **v0.4** | next | Mamba / SSM as a third architecture |
 | **v0.5** | next+2 | Hugging Face model release: pretrained nanoprot-{S,M,L} × {GPT-2, ESM-2, Mamba} checkpoints |
 | **v0.6** | next+3 | Cross-architecture benchmark suite (probing + downstream) |
 | **v1.0** | when stable | Paper-ready release for MLSB / similar venue |

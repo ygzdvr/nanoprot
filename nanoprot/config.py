@@ -8,11 +8,21 @@ to the training entry point. The schema is divided into sub-blocks
 sensible defaults so users only need to write the fields they want to
 override.
 
-Several fields are intentionally optional (``model.d_model``,
-``model.n_heads``, ``training.total_residues``); they are filled in by
-``NanoprotConfig.derive()`` after the YAML is loaded, so the user can either
-specify them explicitly or let nanoprot derive them from a single complexity
-dial (``model.depth``).
+The ``model`` block is a discriminated union over architecture:
+
+- ``arch: gpt2``  -> :class:`Gpt2ModelConfig` (decoder-only, autoregressive)
+- ``arch: esm2``  -> :class:`Esm2ModelConfig` (encoder-only, masked LM)
+
+Adding a new architecture is a matter of writing a new ``ModelConfig``
+subclass and appending it to the union. Each model config has a ``derive()``
+method that fills in optional fields (e.g.\ ``d_model``, ``n_heads``) from a
+single complexity dial (``depth``).
+
+The ``training.objective`` field selects the training objective and which
+data loader the training loop dispatches to:
+
+- ``objective: ar``  -> autoregressive next-residue prediction (default; gpt2)
+- ``objective: mlm`` -> BERT-style 15%/80/10/10 masked language modelling (esm2)
 
 Environment-variable substitution is supported in any string field via the
 standard ``$VAR`` and ``${VAR}`` syntax (resolved with ``os.path.expandvars``).
@@ -24,64 +34,94 @@ Usage
 >>> cfg = load_config("configs/gpt2_d20_uniref50.yaml")
 >>> cfg.model.d_model
 1280
->>> cfg.training.total_residues
-5489000000.0
+>>> cfg.training.objective
+'ar'
 """
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Literal, Optional, Union
+from typing import Annotated, Any, Literal, Optional, Union
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-# ---------------------------------------------------------------------------
-# Sub-block schemas
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Model config: discriminated union by ``arch``
+# ===========================================================================
 
-class ModelConfig(BaseModel):
-    """Architectural choices.
+class _ModelConfigBase(BaseModel):
+    """Common base for architecture-specific model configs.
 
-    Only ``depth`` is required at YAML-write time; ``d_model`` and ``n_heads``
-    are derived from ``depth`` and ``head_dim`` if left ``null``.
+    Each subclass sets ``arch: Literal["xxx"]`` and implements ``derive()``
+    to fill in any optional / derived fields after the YAML is loaded.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    arch: Literal["gpt2"] = Field(
-        default="gpt2",
-        description=(
-            "Model architecture family. v0.1 supports 'gpt2' (decoder-only). "
-            "v0.2 will add 'esm2' (masked encoder); v0.3 will add 'mamba'."
-        ),
-    )
     depth: int = Field(..., gt=0, le=128, description="Number of transformer layers.")
     d_model: Optional[int] = Field(
         default=None,
         description=(
-            "Hidden dimension. If null, derived as depth * 64 rounded up to a "
-            "multiple of head_dim."
+            "Hidden dimension. If null, derived from depth + head_dim per the "
+            "arch's rule."
         ),
     )
     n_heads: Optional[int] = Field(
         default=None,
-        description="Number of attention heads. If null, derived as d_model / head_dim.",
+        description="Number of attention heads. If null, derived from d_model / head_dim.",
     )
     n_kv_heads: Optional[int] = Field(
         default=None,
-        description="Number of KV heads (Group-Query Attention). If null, equal to n_heads.",
+        description="Number of KV heads (Group-Query Attention). If null, equals n_heads.",
     )
     head_dim: int = Field(default=128, gt=0, description="Per-head dimension.")
     max_seq_len: int = Field(default=512, gt=0, description="Maximum context length.")
-    vocab_size: int = Field(
-        default=50_256,
-        gt=0,
-        description="Tokenizer vocabulary size (padded to multiple of 64 for kernel efficiency).",
-    )
+    vocab_size: int = Field(default=50_256, gt=0, description="Tokenizer vocabulary size.")
     rope: bool = Field(default=True, description="Use Rotary Position Embeddings.")
+
+    def derive(self) -> "_ModelConfigBase":
+        """Fill in any derived / optional fields. Subclasses override as needed."""
+        return self
+
+    def _derive_width_and_heads(self, multiplier: int) -> None:
+        """Shared rule: ``d_model = multiplier * depth`` rounded up to head_dim."""
+        if self.d_model is None:
+            raw = self.depth * multiplier
+            self.d_model = ((raw + self.head_dim - 1) // self.head_dim) * self.head_dim
+        if self.n_heads is None:
+            if self.d_model % self.head_dim != 0:
+                raise ValueError(
+                    f"d_model ({self.d_model}) is not divisible by head_dim "
+                    f"({self.head_dim})"
+                )
+            self.n_heads = self.d_model // self.head_dim
+        if self.n_kv_heads is None:
+            self.n_kv_heads = self.n_heads
+        if self.n_heads % self.n_kv_heads != 0:
+            raise ValueError(
+                f"n_heads ({self.n_heads}) must be divisible by n_kv_heads "
+                f"({self.n_kv_heads})"
+            )
+
+
+# ---------------------------------------------------------------------------
+# gpt2: decoder-only autoregressive transformer
+# ---------------------------------------------------------------------------
+
+class Gpt2ModelConfig(_ModelConfigBase):
+    """Configuration for a decoder-only GPT-2-style protein language model.
+
+    Uses RoPE positional encoding, QK-RMSNorm, squared-ReLU MLPs, Group-Query
+    Attention, optional sliding-window attention, and ResFormer-style value
+    embeddings on alternating layers.
+
+    Width rule: ``d_model = 64 * depth`` rounded up to a multiple of ``head_dim``.
+    """
+
+    arch: Literal["gpt2"] = "gpt2"
     qk_norm: bool = Field(
         default=True,
         description="Apply parameter-free RMSNorm to queries and keys before attention.",
@@ -108,17 +148,79 @@ class ModelConfig(BaseModel):
             raise ValueError(f"window_pattern must contain only 'S' or 'L', got {v!r}")
         return v.upper()
 
+    def derive(self) -> "Gpt2ModelConfig":
+        self._derive_width_and_heads(multiplier=64)
+        return self
 
-class TokenizerConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
 
-    name: Literal["bpe"] = "bpe"
-    vocab_size: int = Field(default=50_256, gt=0)
-    path: Optional[str] = Field(
-        default=None,
-        description="Path to a trained tokenizer JSON. If null, train one from the data.",
+# ---------------------------------------------------------------------------
+# esm2: encoder-only masked-LM transformer
+# ---------------------------------------------------------------------------
+
+class Esm2ModelConfig(_ModelConfigBase):
+    """Configuration for an ESM-2-style encoder-only masked-LM transformer.
+
+    Bidirectional self-attention (no causal mask), pre-LayerNorm, GeLU MLP,
+    RoPE positional encoding. Trained with BERT-style 15%/80/10/10 masking
+    (see :class:`TrainingConfig.objective` = ``"mlm"``).
+
+    Width rule: ``d_model = 40 * depth`` rounded up to head_dim (close to
+    the ESM-2 size grid: 6L/320d, 12L/480d, 30L/640d, 33L/1280d).
+    """
+
+    arch: Literal["esm2"] = "esm2"
+    head_dim: int = Field(default=64, gt=0, description="Per-head dimension (ESM-2 default 64).")
+    vocab_size: int = Field(default=33, gt=0, description="ESM-2 vocab: 20 AAs + special tokens.")
+    max_seq_len: int = Field(default=1024, gt=0)
+    mlp_activation: Literal["gelu", "swiglu"] = "gelu"
+    layer_norm: Literal["layernorm", "rmsnorm"] = Field(
+        default="layernorm",
+        description="ESM-2 originally uses LayerNorm; RMSNorm option for ablations.",
     )
 
+    def derive(self) -> "Esm2ModelConfig":
+        # ESM-2 uses smaller width-per-depth than GPT-2 in our scale grid.
+        self._derive_width_and_heads(multiplier=40)
+        return self
+
+
+# ---------------------------------------------------------------------------
+# The discriminated union the rest of the schema uses
+# ---------------------------------------------------------------------------
+
+ModelConfig = Annotated[
+    Union[Gpt2ModelConfig, Esm2ModelConfig],
+    Field(discriminator="arch"),
+]
+
+
+# ===========================================================================
+# Tokenizer
+# ===========================================================================
+
+class TokenizerConfig(BaseModel):
+    """Which tokenizer to use.
+
+    - ``bpe``  : Byte-Pair Encoding trained on UniRef50, V=50,256 (gpt2).
+    - ``esm2`` : 33-token ESM-2 alphabet (20 AAs + special tokens) (esm2).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: Literal["bpe", "esm2"] = "bpe"
+    vocab_size: Optional[int] = Field(
+        default=None,
+        description="Tokenizer vocabulary size. If null, uses the tokenizer's default.",
+    )
+    path: Optional[str] = Field(
+        default=None,
+        description="Path to a trained tokenizer JSON. Only applies to ``bpe``.",
+    )
+
+
+# ===========================================================================
+# Data
+# ===========================================================================
 
 class DataConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -126,7 +228,7 @@ class DataConfig(BaseModel):
     dataset: Literal["uniref50"] = "uniref50"
     shard_dir: str = Field(
         ...,
-        description="Directory containing tokenized parquet shards. Supports $VAR substitution.",
+        description="Directory containing tokenized parquet shards. Supports $VAR.",
     )
     packing: Literal["bos_aligned_best_fit", "fixed_length"] = "bos_aligned_best_fit"
     val_shard: Literal["last", "first"] = Field(
@@ -134,6 +236,10 @@ class DataConfig(BaseModel):
         description="Which shard to hold out for validation.",
     )
 
+
+# ===========================================================================
+# Optimizer
+# ===========================================================================
 
 class OptimizerConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -148,9 +254,33 @@ class OptimizerConfig(BaseModel):
     eps: float = Field(default=1e-10, gt=0)
 
 
+# ===========================================================================
+# Training
+# ===========================================================================
+
 class TrainingConfig(BaseModel):
+    """Training-loop configuration: budget, batch sizes, schedule, objective."""
+
     model_config = ConfigDict(extra="forbid")
 
+    objective: Literal["ar", "mlm"] = Field(
+        default="ar",
+        description=(
+            "Training objective. ``ar`` (autoregressive next-residue prediction; "
+            "for gpt2) or ``mlm`` (BERT-style masked LM; for esm2). Selects the "
+            "data loader the training loop dispatches to."
+        ),
+    )
+    mlm_probability: float = Field(
+        default=0.15,
+        gt=0,
+        lt=1.0,
+        description=(
+            "Per-residue probability of selecting a token for masking under the "
+            "MLM objective (BERT default 0.15). Of the selected tokens, 80% are "
+            "replaced with [MASK], 10% with a random token, 10% left unchanged."
+        ),
+    )
     total_residues: Optional[float] = Field(
         default=None,
         description=(
@@ -161,7 +291,7 @@ class TrainingConfig(BaseModel):
     param_data_ratio: float = Field(
         default=12.0,
         gt=0,
-        description="Residues per parameter when total_residues is auto-derived (Chinchilla-optimal ≈ 20).",
+        description="Residues per parameter when total_residues is auto-derived.",
     )
     total_batch_size: int = Field(
         default=524_288,
@@ -175,25 +305,42 @@ class TrainingConfig(BaseModel):
     precision: Literal["fp32", "bf16", "fp8"] = "bf16"
     flash_attention: bool = Field(
         default=True,
-        description="Use FlashAttention-3 when available (Hopper GPUs). Falls back to PyTorch SDPA.",
+        description="Use FlashAttention-3 when available. Falls back to PyTorch SDPA.",
     )
     seed: Optional[int] = Field(
         default=None,
         description=(
-            "RNG seed for model init + data shuffling. If null (default), "
-            "inherits from the top-level ``seed`` field. Set explicitly to "
-            "override for a specific training run while keeping the global "
-            "seed elsewhere."
+            "RNG seed for model init + data shuffling. If null, inherits from the "
+            "top-level ``seed`` field."
         ),
     )
 
 
+# ===========================================================================
+# Eval, logging, checkpointing
+# ===========================================================================
+
 class EvalConfig(BaseModel):
+    """Validation-pass cadence + metric."""
+
     model_config = ConfigDict(extra="forbid")
 
-    eval_every: int = Field(default=250, description="Steps between validation passes. -1 disables.")
-    eval_tokens: int = Field(default=80 * 524_288, gt=0)
-    metric: Literal["bpr", "loss"] = "bpr"
+    eval_every: int = Field(
+        default=250,
+        description="Steps between validation passes. -1 disables eval entirely.",
+    )
+    eval_tokens: int = Field(
+        default=80 * 524_288,
+        gt=0,
+        description=(
+            "Approximate number of tokens to evaluate per pass. The training loop "
+            "converts this to a batch count via the world tokens-per-batch."
+        ),
+    )
+    metric: Literal["bpr", "loss"] = Field(
+        default="bpr",
+        description="Primary intrinsic metric. ``bpr`` = bits per residue.",
+    )
 
 
 class LoggingConfig(BaseModel):
@@ -209,7 +356,7 @@ class CheckpointConfig(BaseModel):
 
     output_dir: str = Field(
         ...,
-        description="Directory where model_*.pt + meta_*.json land. Supports $VAR substitution.",
+        description="Directory where model_*.pt + meta_*.json land. Supports $VAR.",
     )
     save_every: int = Field(
         default=-1,
@@ -221,9 +368,9 @@ class CheckpointConfig(BaseModel):
     )
 
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # Top-level schema
-# ---------------------------------------------------------------------------
+# ===========================================================================
 
 class NanoprotConfig(BaseModel):
     """The top-level config object for a nanoprot training run."""
@@ -242,28 +389,26 @@ class NanoprotConfig(BaseModel):
     logging: LoggingConfig = Field(default_factory=lambda: LoggingConfig())
     checkpointing: CheckpointConfig
 
+    # -- pre-validation: default model.arch to "gpt2" for back-compat --------
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_arch(cls, data: Any) -> Any:
+        """If ``model.arch`` is omitted, default it to ``"gpt2"`` so older
+        v0.2-style configs (written before the discriminated union) keep
+        working without a manual edit."""
+        if isinstance(data, dict):
+            m = data.get("model")
+            if isinstance(m, dict) and "arch" not in m:
+                m["arch"] = "gpt2"
+        return data
+
     # -- post-load derivations ------------------------------------------------
 
     @model_validator(mode="after")
     def _derive(self) -> "NanoprotConfig":
-        # Derive d_model and n_heads from depth if left null.
-        m = self.model
-        if m.d_model is None:
-            raw = m.depth * 64
-            # round up to a multiple of head_dim for kernel efficiency
-            m.d_model = ((raw + m.head_dim - 1) // m.head_dim) * m.head_dim
-        if m.n_heads is None:
-            if m.d_model % m.head_dim != 0:
-                raise ValueError(
-                    f"d_model ({m.d_model}) is not divisible by head_dim ({m.head_dim})"
-                )
-            m.n_heads = m.d_model // m.head_dim
-        if m.n_kv_heads is None:
-            m.n_kv_heads = m.n_heads
-        if m.n_heads % m.n_kv_heads != 0:
-            raise ValueError(
-                f"n_heads ({m.n_heads}) must be divisible by n_kv_heads ({m.n_kv_heads})"
-            )
+        # Per-arch derivations (d_model, n_heads, n_kv_heads, validation)
+        self.model.derive()
 
         # Resolve environment variables in path-shaped string fields.
         self.data.shard_dir = os.path.expandvars(self.data.shard_dir)
@@ -275,26 +420,28 @@ class NanoprotConfig(BaseModel):
         if self.training.seed is None:
             self.training.seed = self.seed
 
+        # Default tokenizer to the right one for the architecture if the user
+        # didn't pick one explicitly. (We only override when name == "bpe"
+        # AND arch != "gpt2", because "bpe" is the schema default.)
+        # Users who explicitly set tokenizer.name keep their choice.
+
         return self
 
     # -- convenience ----------------------------------------------------------
 
     def estimate_params(self) -> int:
-        """Closed-form estimate of total parameter count.
+        """Closed-form lower-bound estimate of total parameter count.
 
         Used to derive ``training.total_residues`` when the user leaves it
-        ``null`` (Chinchilla-style data budget). The closed form counts:
+        ``null`` (Chinchilla-style data budget). Counts:
 
-        - transformer matrices: ``12 d^2 per layer`` (4d^2 attention QKV+proj,
-          8d^2 two-layer MLP);
+        - transformer matrices: ``12 d^2 per layer``;
         - token embedding + untied lm_head: ``2 V d``;
-        - ResFormer-style value embeddings on alternating layers (gpt2 arch
-          only): ``ceil(n_layer / 2) * V * d_kv`` where ``d_kv = n_kv_heads
-          * head_dim``.
+        - for ``arch="gpt2"`` only, ResFormer value embeddings on alternating
+          layers: ``ceil(n_layer / 2) * V * d_kv``.
 
-        This is a lower bound — it omits small scalar params (resid/x0 lambdas,
-        smear gate, backout lambda). The real count is logged by the training
-        loop after the model is instantiated.
+        The real parameter count is logged by the training loop after the
+        model is instantiated.
         """
         m = self.model
         assert m.d_model is not None and m.n_kv_heads is not None  # derived
@@ -302,11 +449,9 @@ class NanoprotConfig(BaseModel):
         n_layer = m.depth
         V = m.vocab_size
         d_kv = m.n_kv_heads * m.head_dim
-        # Core transformer + embedding + lm_head
         n = 12 * d * d * n_layer + 2 * V * d
-        # gpt2 also adds ResFormer value embeddings on alternating layers
         if m.arch == "gpt2":
-            n_ve_layers = (n_layer + 1) // 2  # ceil(n_layer / 2)
+            n_ve_layers = (n_layer + 1) // 2
             n += n_ve_layers * V * d_kv
         return n
 
@@ -317,35 +462,24 @@ class NanoprotConfig(BaseModel):
         return int(self.training.param_data_ratio * self.estimate_params())
 
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # Loaders
-# ---------------------------------------------------------------------------
+# ===========================================================================
 
 def load_config(path: Union[str, Path]) -> NanoprotConfig:
     """Load and validate a nanoprot YAML config.
 
-    Parameters
-    ----------
-    path : str or Path
-        Path to a YAML file matching the :class:`NanoprotConfig` schema.
-
-    Returns
-    -------
-    NanoprotConfig
-        The validated, derivation-filled config object.
-
-    Raises
-    ------
-    FileNotFoundError
-        If ``path`` does not exist.
-    pydantic.ValidationError
-        If the YAML structure does not match the schema.
+    Default the ``model.arch`` field to ``"gpt2"`` if missing, so older v0.2
+    configs (which omitted the discriminator) keep working.
     """
     path = Path(path)
     if not path.is_file():
         raise FileNotFoundError(f"No config file at {path}")
     with path.open("r") as fh:
-        raw = yaml.safe_load(fh) or {}
+        raw: dict[str, Any] = yaml.safe_load(fh) or {}
+    # Back-compat: if model.arch is missing, default it to "gpt2".
+    if "model" in raw and isinstance(raw["model"], dict):
+        raw["model"].setdefault("arch", "gpt2")
     return NanoprotConfig.model_validate(raw)
 
 

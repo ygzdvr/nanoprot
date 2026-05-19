@@ -247,6 +247,16 @@ class GPT(nn.Module):
             if block.attn.ve_gate is not None:
                 torch.nn.init.uniform_(block.attn.ve_gate.weight, 0.0, 0.02)
 
+        # Smear gate + smear_lambda + backout_lambda: these are
+        # nn.Parameter(zeros) / Parameter(0.2 * ones) in __init__, but under
+        # the meta-device + to_empty(...) build path the init values are
+        # cleared to uninitialized memory (which can contain NaN). Set them
+        # explicitly here so init_weights() leaves the model in a fully
+        # initialized state regardless of how it was constructed.
+        torch.nn.init.zeros_(self.smear_gate.weight)
+        torch.nn.init.zeros_(self.smear_lambda)
+        torch.nn.init.constant_(self.backout_lambda, 0.2)
+
         # Rotary embeddings
         head_dim = self.config.n_embd // self.config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
