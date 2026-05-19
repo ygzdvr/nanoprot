@@ -12,10 +12,12 @@ from typing import Callable, Dict, Union
 from nanoprot.config import (
     Esm2ModelConfig,
     Gpt2ModelConfig,
+    MambaModelConfig,
     _ModelConfigBase,
 )
 from nanoprot.models.esm2 import ESM2, ESM2Config, Esm2
 from nanoprot.models.gpt2 import GPT, GPTConfig
+from nanoprot.models.mamba import MAMBA, Mamba, MambaConfig
 
 __all__ = [
     "GPT",
@@ -23,6 +25,9 @@ __all__ = [
     "Esm2",
     "ESM2",
     "ESM2Config",
+    "Mamba",
+    "MAMBA",
+    "MambaConfig",
     "build_model",
     "register_model",
     "list_archs",
@@ -100,3 +105,23 @@ def _build_esm2(cfg: Esm2ModelConfig) -> Esm2:
 
 
 register_model("esm2", _build_esm2)
+
+
+# -- mamba factory ---------------------------------------------------------
+
+def _build_mamba(cfg: MambaModelConfig) -> Mamba:
+    legacy = MambaConfig(
+        sequence_len=cfg.max_seq_len,
+        vocab_size=cfg.vocab_size,
+        n_layer=cfg.depth,
+        n_embd=cfg.d_model,  # type: ignore[arg-type]
+        d_state=cfg.d_state,
+        d_conv=cfg.d_conv,
+        expand=cfg.expand,
+        dt_rank=cfg.dt_rank,  # type: ignore[arg-type]
+        layer_norm=cfg.layer_norm,
+    )
+    return Mamba(legacy)
+
+
+register_model("mamba", _build_mamba)

@@ -8,12 +8,13 @@ protein language models: clean training code, multiple architectures, dense
 checkpoint sweeps, and pretrained model releases small enough that a single
 research group can re-train them.
 
-> Status: **v0.3.0 — multi-architecture release.** Both GPT-2-style
-> autoregressive decoders and ESM-2-style masked-LM encoders, each fully
-> driven from a single YAML config (`arch: gpt2|esm2`, `objective: ar|mlm`,
-> `tokenizer: bpe|esm2`). Eval loop wired in (val_bpr + best_val_bpr tracked
-> across training). Periodic + final checkpointing. Single-node DDP via
-> torchrun. 80 unit + integration tests. See the [roadmap](#roadmap) for
+> Status: **v0.4.0 — three architectures.** GPT-2-style autoregressive
+> decoders, ESM-2-style masked-LM encoders, AND Mamba selective-SSM
+> language models, all driven from a single YAML config
+> (`arch: gpt2|esm2|mamba`). Discriminated-union config schema; the
+> training loop dispatches the right model, tokenizer, data loader, and
+> objective from one place. Eval loop, checkpointing, single-node DDP via
+> torchrun. 94 unit + integration tests. See the [roadmap](#roadmap) for
 > what lands next.
 
 ---
@@ -55,7 +56,7 @@ checkpointing:
 That's a complete config. Everything else picks up sensible defaults from
 `nanoprot/config.py`.
 
-## What's in v0.3
+## What's in v0.4
 
 ```
 nanoprot/
@@ -68,7 +69,8 @@ nanoprot/
 │   ├── models/
 │   │   ├── __init__.py        model registry (build_model, register_model)
 │   │   ├── gpt2.py            decoder-only GPT-2-style transformer (AR)
-│   │   └── esm2.py            ESM-2-style encoder-only transformer (MLM)
+│   │   ├── esm2.py            ESM-2-style encoder-only transformer (MLM)
+│   │   └── mamba.py           Mamba selective-SSM language model (AR)
 │   ├── tokenizers/
 │   │   ├── bpe.py             BPE tokenizer (UniRef50, V=50,256)
 │   │   ├── residue.py         single-letter residue tokenizer alternative
@@ -85,14 +87,15 @@ nanoprot/
 │       ├── loss.py            bits-per-byte / bits-per-residue eval
 │       └── protein.py         protein-specific eval (validity, AA freq)
 ├── configs/
-│   ├── README.md              config-system docs
+│   ├── README.md               config-system docs
 │   ├── gpt2_d20_uniref50.yaml  reference 1.17 B-param AR run (gpt2 + bpe + AR)
 │   ├── esm2_8M_uniref50.yaml   smallest ESM-2 scale (esm2 + esm2 tokenizer + MLM)
-│   └── esm2_650M_uniref50.yaml matches facebook/esm2_t33_650M_UR50D footprint
+│   ├── esm2_650M_uniref50.yaml matches facebook/esm2_t33_650M_UR50D footprint
+│   └── mamba_small_uniref50.yaml ~30 M-param Mamba selective SSM (mamba + bpe + AR)
 ├── scripts/
 │   ├── train.py               training entry point (single GPU or torchrun)
 │   └── show_config.py         load + inspect any config (no training)
-├── tests/                     80 tests; 9 of them exercise the loop end-to-end
+├── tests/                     94 tests; 11 of them exercise the model end-to-end
 └── pyproject.toml             uv-managed (pydantic + pyyaml + torch)
 ```
 
@@ -108,16 +111,20 @@ pip install -e ".[dev]"
 # sanity-check a config (no training, no GPU needed)
 python -m scripts.show_config configs/gpt2_d20_uniref50.yaml --estimate
 python -m scripts.show_config configs/esm2_650M_uniref50.yaml --estimate
+python -m scripts.show_config configs/mamba_small_uniref50.yaml --estimate
 
-# run the test suite (80 tests; ~50 fast in ~10s, ~9 end-to-end in ~2 min)
-pytest -m "not slow"        # fast only
-pytest                       # all
+# run the test suite (94 tests total)
+pytest -m "not slow"        # 83 fast tests in ~10 s
+pytest                       # all 94 (includes ~3-min Mamba/loop integrations)
 
-# launch training, single device (autoregressive GPT-2):
+# launch training, single device — GPT-2 (autoregressive):
 python -m scripts.train --config configs/gpt2_d20_uniref50.yaml
 
-# launch training, single device (masked-LM ESM-2):
+# launch training, single device — ESM-2 (masked LM):
 python -m scripts.train --config configs/esm2_650M_uniref50.yaml
+
+# launch training, single device — Mamba (selective SSM, autoregressive):
+python -m scripts.train --config configs/mamba_small_uniref50.yaml
 
 # launch training, torchrun on 8 GPUs:
 OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 \\
@@ -125,9 +132,10 @@ OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 \\
 ```
 
 Swapping between architectures is purely a config change. The training
-loop dispatches the right data loader (`ar` -> AR packing; `mlm` ->
-packing + 15% / 80/10/10 BERT masking) and the right tokenizer
-(`bpe` -> UniRef50 BPE V=50,256; `esm2` -> 33-token ESM-2 alphabet).
+loop dispatches the right model (gpt2 / esm2 / mamba), the right
+tokenizer (`bpe` -> UniRef50 BPE V=50,256; `esm2` -> 33-token ESM-2
+alphabet), and the right data loader (`ar` -> AR packing; `mlm` ->
+packing + 15% / 80/10/10 BERT masking).
 
 Expected output of `show_config --estimate`:
 
@@ -156,8 +164,8 @@ that is printed once the model is instantiated in v0.2.)
 | **v0.1** | shipped | Config schema, YAML loader, derivation rules, example config, tests |
 | **v0.2** | shipped | GPT-2 model, BPE tokenizer, UniRef50 packing loader, Muon+AdamW optimizer, FA3 with SDPA fallback, training loop, checkpointing, single-node DDP via torchrun |
 | **v0.2.1** | shipped | Patches: fixed `save_checkpoint` + dataloader signature regressions, wired `training.precision` and `training.flash_attention` through, added CPU end-to-end integration test, dump_config round-trip, seed inheritance, improved closed-form parameter estimate (includes value embeddings) |
-| **v0.3** | **shipped** | Discriminated-union `ModelConfig` (gpt2 \| esm2), ESM-2 encoder model + 33-token ESM-2 tokenizer, BERT-style MLM data loader (15% / 80/10/10), `training.objective` (ar \| mlm) loop dispatch, eval loop integration (val_bpr + best_val_bpr), bidirectional-attention SDPA path, 80 tests total, ESM-2 8M + 650M config presets |
-| **v0.4** | next | Mamba / SSM as a third architecture |
+| **v0.3** | shipped | Discriminated-union `ModelConfig` (gpt2 \| esm2), ESM-2 encoder model + 33-token ESM-2 tokenizer, BERT-style MLM data loader (15% / 80/10/10), `training.objective` (ar \| mlm) loop dispatch, eval loop integration (val_bpr + best_val_bpr), bidirectional-attention SDPA path, 80 tests total, ESM-2 8M + 650M config presets |
+| **v0.4** | **shipped** | Mamba selective-SSM model (third arch in the discriminated union); depthwise causal conv + selective scan + gating + Pre-RMSNorm; pure-PyTorch reference scan (works on CPU/GPU/MPS); causal-by-construction so AR training pipeline reuses; new `MambaModelConfig` with `d_state`, `d_conv`, `expand`, auto-derived `dt_rank`; 14 Mamba tests including causality + scan correctness; `mamba_small_uniref50.yaml` config preset |
 | **v0.5** | next+2 | Hugging Face model release: pretrained nanoprot-{S,M,L} × {GPT-2, ESM-2, Mamba} checkpoints |
 | **v0.6** | next+3 | Cross-architecture benchmark suite (probing + downstream) |
 | **v1.0** | when stable | Paper-ready release for MLSB / similar venue |

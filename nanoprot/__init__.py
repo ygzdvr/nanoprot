@@ -1,6 +1,6 @@
 """nanoprot — a minimal, config-driven training framework for protein language models."""
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 from nanoprot.config import (
     CheckpointConfig,
@@ -9,6 +9,7 @@ from nanoprot.config import (
     Esm2ModelConfig,
     Gpt2ModelConfig,
     LoggingConfig,
+    MambaModelConfig,
     ModelConfig,
     NanoprotConfig,
     OptimizerConfig,
@@ -26,6 +27,7 @@ __all__ = [
     "ModelConfig",
     "Gpt2ModelConfig",
     "Esm2ModelConfig",
+    "MambaModelConfig",
     "TokenizerConfig",
     "DataConfig",
     "OptimizerConfig",

@@ -185,11 +185,73 @@ class Esm2ModelConfig(_ModelConfigBase):
 
 
 # ---------------------------------------------------------------------------
+# mamba: selective state-space model
+# ---------------------------------------------------------------------------
+
+class MambaModelConfig(_ModelConfigBase):
+    """Configuration for a Mamba-style selective state-space model.
+
+    Pre-RMSNorm trunk. Each block: input projection -> depthwise 1-D conv
+    -> SiLU -> selective SSM (input-dependent ``B``, ``C``, ``\\Delta``;
+    diagonal ``A``) gated by a sigmoid-of-projection branch -> output
+    projection. Causal by construction (the SSM scan is left-to-right),
+    so it pairs with the autoregressive training objective.
+
+    Width rule: ``d_model = 64 * depth`` rounded up to ``head_dim``
+    (head_dim has no architectural meaning for Mamba, but is kept for
+    the rounding-to-multiple convenience and for parity with the gpt2
+    width grid).
+    """
+
+    arch: Literal["mamba"] = "mamba"
+    head_dim: int = Field(default=64, gt=0, description="Rounding granularity for d_model.")
+    n_kv_heads: Optional[int] = Field(
+        default=1,
+        description="Not used by Mamba; kept for schema compatibility.",
+    )
+    n_heads: Optional[int] = Field(default=1, description="Not used by Mamba.")
+    d_state: int = Field(
+        default=16,
+        gt=0,
+        description="Per-channel SSM hidden-state size (the 'N' in Mamba).",
+    )
+    d_conv: int = Field(
+        default=4,
+        gt=0,
+        description="Kernel size of the depthwise causal 1-D convolution.",
+    )
+    expand: int = Field(
+        default=2,
+        gt=0,
+        description="Inner-dimension expansion factor; ``d_inner = expand * d_model``.",
+    )
+    dt_rank: Optional[int] = Field(
+        default=None,
+        description=(
+            "Rank of the input -> Delta projection. If null, set to "
+            "``max(d_model // 16, 1)`` (matches the public Mamba defaults)."
+        ),
+    )
+    layer_norm: Literal["rmsnorm", "layernorm"] = Field(
+        default="rmsnorm",
+        description="Mamba's reference implementation uses RMSNorm.",
+    )
+
+    def derive(self) -> "MambaModelConfig":
+        # Width: like gpt2 (64 per depth), rounded to head_dim multiple.
+        self._derive_width_and_heads(multiplier=64)
+        if self.dt_rank is None:
+            assert self.d_model is not None
+            self.dt_rank = max(self.d_model // 16, 1)
+        return self
+
+
+# ---------------------------------------------------------------------------
 # The discriminated union the rest of the schema uses
 # ---------------------------------------------------------------------------
 
 ModelConfig = Annotated[
-    Union[Gpt2ModelConfig, Esm2ModelConfig],
+    Union[Gpt2ModelConfig, Esm2ModelConfig, MambaModelConfig],
     Field(discriminator="arch"),
 ]
 

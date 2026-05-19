@@ -60,6 +60,7 @@ config-load time.
 | `gpt2_d20_uniref50.yaml` | gpt2 | 1.17 B | AR (next-residue) | Reference `nanoprot-d20` training run |
 | `esm2_8M_uniref50.yaml` | esm2 | ~8 M | MLM (15%/80/10/10) | Smallest ESM-2-class encoder for fast iteration |
 | `esm2_650M_uniref50.yaml` | esm2 | ~650 M | MLM (15%/80/10/10) | Matches facebook/esm2_t33_650M_UR50D footprint |
+| `mamba_small_uniref50.yaml` | mamba | ~30 M | AR (next-residue) | Selective state-space model with depthwise causal conv |
 
 Each preset specifies its own `model.arch` (gpt2 or esm2), its own
 `training.objective` (ar or mlm), and the matching `tokenizer.name`. The
