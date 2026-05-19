@@ -1,6 +1,6 @@
 [project]
 name = "nanoprot"
-version = "0.1.0"
+version = "0.2.0"
 description = "A minimal, hackable, config-driven training framework for protein language models."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -26,14 +26,27 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
-# v0.1 — config-system scaffold only. Training-side deps (torch, flash-attn,
-# datasets, …) are added in v0.2 when the actual training loop lands.
 dependencies = [
     "pydantic>=2.6,<3",
     "pyyaml>=6.0,<7",
+    "torch>=2.3,<3",
+    "numpy>=1.26,<3",
+    "pandas>=2.0",
+    "pyarrow>=15.0",
+    "tiktoken>=0.7",
+    "tokenizers>=0.20",
+    "huggingface_hub>=0.24",
+    "datasets>=2.18",
+    "tqdm>=4.66",
+    "wandb>=0.17",
 ]
 
 [project.optional-dependencies]
+# Hopper-only: FlashAttention-3 via the kernels hub. Other GPUs fall back to
+# PyTorch SDPA automatically.
+gpu = [
+    "kernels>=0.4",
+]
 dev = [
     "pytest>=8",
     "pytest-cov",
@@ -65,3 +78,6 @@ ignore = ["E501"]  # we let line-length handle long lines
 minversion = "8.0"
 testpaths = ["tests"]
 addopts = "-v --strict-markers"
+markers = [
+    "slow: marks tests that allocate models or run forward passes (deselect with -m 'not slow')",
+]

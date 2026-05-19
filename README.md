@@ -8,8 +8,10 @@ protein language models: clean training code, multiple architectures, dense
 checkpoint sweeps, and pretrained model releases small enough that a single
 research group can re-train them.
 
-> Status: **v0.1 — config-system scaffold.** No training loop yet. See the
-> [roadmap](#roadmap) below for what lands when.
+> Status: **v0.2 — first runnable training loop.** GPT-2-style decoder,
+> Muon+AdamW optimizer, BPE tokenizer, packing-aware UniRef50 loader,
+> FlashAttention-3 (with SDPA fallback), checkpointing, and single-node DDP
+> via torchrun. See the [roadmap](#roadmap) for what lands next.
 
 ---
 
@@ -50,41 +52,68 @@ checkpointing:
 That's a complete config. Everything else picks up sensible defaults from
 `nanoprot/config.py`.
 
-## What's in v0.1
+## What's in v0.2
 
 ```
 nanoprot/
 ├── nanoprot/
 │   ├── __init__.py
-│   └── config.py              Pydantic schema + YAML loader + derivation rules
+│   ├── config.py              Pydantic schema + YAML loader + derivation rules
+│   ├── runtime.py             device + dtype detection, DDP init, logging
+│   ├── attention.py           FlashAttention-3 wrapper with SDPA fallback
+│   ├── optim.py               Muon + AdamW (single-process + DDP variants)
+│   ├── models/
+│   │   ├── __init__.py        model registry (build_model, register_model)
+│   │   └── gpt2.py            decoder-only GPT-2-style transformer
+│   ├── tokenizers/
+│   │   ├── bpe.py             BPE tokenizer (protein-adapted)
+│   │   └── residue.py         single-letter residue tokenizer alternative
+│   ├── data/
+│   │   ├── dataset.py         UniRef50 parquet shard reader
+│   │   └── dataloader.py      BOS-aligned best-fit packing loader
+│   ├── training/
+│   │   ├── loop.py            end-to-end training loop (config -> trained model)
+│   │   └── checkpoint.py      save/load model + optimizer + meta
+│   └── eval/
+│       ├── loss.py            evaluate_bpb (bits-per-byte / bits-per-residue)
+│       └── protein.py         protein-specific eval (validity, AA freq)
 ├── configs/
 │   ├── README.md              config-system docs
 │   └── gpt2_d20_uniref50.yaml reference nanoprot-d20 run config
 ├── scripts/
+│   ├── train.py               training entry point (single GPU or torchrun)
 │   └── show_config.py         load + inspect any config (no training)
 ├── tests/
-│   └── test_config.py
-├── pyproject.toml             uv-managed Python project (pydantic + pyyaml only)
+│   ├── test_config.py         19 tests for the schema + derivation
+│   └── test_model.py          6 tests for the model registry + forward pass
+├── pyproject.toml             uv-managed Python project (pydantic + pyyaml + torch)
 └── LICENSE
 ```
 
-This first release is *only the design pattern*. The training loop, model
-code, tokenizer, and data pipeline land in v0.2 (see roadmap).
+The framework now does end-to-end training. ESM-2 and Mamba architectures
+land in v0.3 and v0.4 respectively.
 
-## Quickstart (v0.1)
+## Quickstart
 
 ```bash
 git clone https://github.com/ygzdvr/nanoprot.git
 cd nanoprot
 
-# minimal install (no torch yet — just config-system deps)
+# install (CPU-only dev; add the [gpu] extra on Hopper for FA3)
 pip install -e ".[dev]"
 
-# sanity-check the example config
+# sanity-check a config (no training, no GPU needed)
 python -m scripts.show_config configs/gpt2_d20_uniref50.yaml --estimate
 
-# run the test suite
+# run the test suite (24 unit tests + 1 forward-pass smoke test)
 pytest
+
+# launch training: single device
+python -m scripts.train --config configs/gpt2_d20_uniref50.yaml
+
+# launch training: torchrun on 8 GPUs
+OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 \\
+    -m scripts.train -- --config configs/gpt2_d20_uniref50.yaml
 ```
 
 Expected output of `show_config --estimate`:
@@ -109,14 +138,14 @@ that is printed once the model is instantiated in v0.2.)
 
 ## Roadmap
 
-| Version | Lands | What it adds |
+| Version | Status | What it adds |
 |---|---|---|
-| **v0.1** | now | Config schema, YAML loader, derivation rules, example config, tests |
-| **v0.2** | next | GPT-2 model code, tokenizer, UniRef50 data pipeline, training loop, checkpointing, single-node DDP |
-| **v0.3** | next+1 | ESM-2-style masked encoder as a second architecture |
-| **v0.4** | next+2 | Mamba / SSM as a third architecture |
-| **v0.5** | next+3 | Hugging Face model release: pretrained nanoprot-{S,M,L} × {GPT-2, ESM-2, Mamba} checkpoints |
-| **v0.6** | next+4 | Cross-architecture benchmark suite (probing + downstream) |
+| **v0.1** | shipped | Config schema, YAML loader, derivation rules, example config, tests |
+| **v0.2** | **shipped** | GPT-2 model, BPE tokenizer, UniRef50 packing loader, Muon+AdamW optimizer, FA3 with SDPA fallback, training loop, checkpointing, single-node DDP via torchrun |
+| **v0.3** | next | ESM-2-style masked encoder as a second architecture |
+| **v0.4** | next+1 | Mamba / SSM as a third architecture |
+| **v0.5** | next+2 | Hugging Face model release: pretrained nanoprot-{S,M,L} × {GPT-2, ESM-2, Mamba} checkpoints |
+| **v0.6** | next+3 | Cross-architecture benchmark suite (probing + downstream) |
 | **v1.0** | when stable | Paper-ready release for MLSB / similar venue |
 
 ## Comparison to related projects

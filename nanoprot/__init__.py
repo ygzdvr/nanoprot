@@ -1,21 +1,24 @@
 """nanoprot — a minimal, config-driven training framework for protein language models."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from nanoprot.config import (
-    NanoprotConfig,
-    ModelConfig,
-    TokenizerConfig,
+    CheckpointConfig,
     DataConfig,
-    OptimizerConfig,
-    TrainingConfig,
     EvalConfig,
     LoggingConfig,
-    CheckpointConfig,
+    ModelConfig,
+    NanoprotConfig,
+    OptimizerConfig,
+    TokenizerConfig,
+    TrainingConfig,
     load_config,
 )
+from nanoprot.models import GPT, GPTConfig, build_model, list_archs, register_model
 
 __all__ = [
+    "__version__",
+    # config (re-exported)
     "NanoprotConfig",
     "ModelConfig",
     "TokenizerConfig",
@@ -26,4 +29,10 @@ __all__ = [
     "LoggingConfig",
     "CheckpointConfig",
     "load_config",
+    # model registry
+    "GPT",
+    "GPTConfig",
+    "build_model",
+    "list_archs",
+    "register_model",
 ]
