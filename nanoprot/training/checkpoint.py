@@ -144,7 +144,7 @@ def find_last_step(checkpoint_dir):
     return last_step
 
 # -----------------------------------------------------------------------------
-# convenience functions that take into account nanochat's directory structure
+# convenience functions that take into account nanoprot's directory structure
 
 def load_model_from_dir(checkpoints_dir, device, phase, model_tag=None, step=None):
     if model_tag is None:

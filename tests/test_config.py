@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -11,6 +10,7 @@ from pydantic import ValidationError
 
 from nanoprot.config import (
     NanoprotConfig,
+    dump_config,
     load_config,
 )
 
@@ -143,10 +143,12 @@ class TestLoadConfig:
         assert cfg.name == "test-tiny"
         assert cfg.model.depth == 4
 
-    def test_reference_d20_config_loads_and_derives(self) -> None:
+    def test_reference_d20_config_loads_and_derives(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         path = CONFIGS_DIR / "gpt2_d20_uniref50.yaml"
         assert path.is_file(), f"reference config missing at {path}"
-        os.environ.setdefault("NANOPROT_BASE_DIR", "/tmp/nanoprot_test")
+        monkeypatch.setenv("NANOPROT_BASE_DIR", "/tmp/nanoprot_test")
         cfg = load_config(path)
         # The reference d20 numbers from the docstring.
         assert cfg.model.depth == 20
@@ -180,3 +182,72 @@ class TestEstimates:
         cfg = NanoprotConfig(**_minimal_config_dict())
         n = cfg.total_residues()
         assert n == int(cfg.training.param_data_ratio * cfg.estimate_params())
+
+    def test_estimate_includes_value_embeddings_for_gpt2(self) -> None:
+        """gpt2 arch should add ResFormer value embeddings on alternating layers.
+
+        The closed-form estimate for d20 used to be ~522 M (just attention + MLP
+        + token embedding + lm_head). With value embeddings on 10 of the 20
+        layers, the estimate climbs to ~1.2 B, much closer to the real 1.17 B.
+        """
+        d = _minimal_config_dict()
+        d["model"] = {"depth": 20, "vocab_size": 50_256}
+        cfg = NanoprotConfig(**d)
+        n = cfg.estimate_params()
+        # Lower bound: at least the core (12 d^2 L + 2 V d) ~ 521 M.
+        # Upper bound: well under 2 B (would mean we're double-counting).
+        assert 900_000_000 < n < 1_500_000_000, f"got {n:,} (~{n / 1e9:.2f} B)"
+
+
+class TestSeedInheritance:
+    def test_training_seed_inherits_from_global_when_unset(self) -> None:
+        d = _minimal_config_dict()
+        d["seed"] = 99
+        cfg = NanoprotConfig(**d)
+        assert cfg.training.seed == 99
+
+    def test_training_seed_respected_when_explicit(self) -> None:
+        d = _minimal_config_dict()
+        d["seed"] = 99
+        d["training"] = {"seed": 123}
+        cfg = NanoprotConfig(**d)
+        # Explicit training seed wins over global seed.
+        assert cfg.training.seed == 123
+
+    def test_global_seed_default_propagates(self) -> None:
+        cfg = NanoprotConfig(**_minimal_config_dict())
+        # Default global seed is 42; training.seed (None) inherits.
+        assert cfg.seed == 42
+        assert cfg.training.seed == 42
+
+
+class TestDumpConfigRoundTrip:
+    def test_dump_then_load_preserves_values(self, tmp_path: Path) -> None:
+        original_dict = _minimal_config_dict()
+        original_dict["seed"] = 17
+        original_dict["model"]["depth"] = 8
+        original_dict["training"] = {"total_batch_size": 131072, "device_batch_size": 4}
+        original = NanoprotConfig(**original_dict)
+
+        out = tmp_path / "roundtrip.yaml"
+        dump_config(original, out)
+        reloaded = load_config(out)
+
+        # Top-level identifiers
+        assert reloaded.name == original.name
+        assert reloaded.seed == original.seed
+        # Model + derivations
+        assert reloaded.model.depth == original.model.depth
+        assert reloaded.model.d_model == original.model.d_model
+        assert reloaded.model.n_heads == original.model.n_heads
+        # Training
+        assert reloaded.training.total_batch_size == 131072
+        assert reloaded.training.device_batch_size == 4
+        # Seed inheritance round-trips
+        assert reloaded.training.seed == 17
+
+    def test_dump_creates_parent_dirs(self, tmp_path: Path) -> None:
+        cfg = NanoprotConfig(**_minimal_config_dict())
+        out = tmp_path / "nested" / "dir" / "cfg.yaml"
+        dump_config(cfg, out)
+        assert out.is_file()

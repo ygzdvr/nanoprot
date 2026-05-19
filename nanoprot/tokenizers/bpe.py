@@ -394,7 +394,7 @@ class RustBPETokenizer:
         return ids
 
 # -----------------------------------------------------------------------------
-# nanochat-specific convenience functions
+# nanoprot-specific convenience functions
 
 def get_tokenizer():
     from nanoprot.runtime import get_base_dir

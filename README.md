@@ -8,10 +8,14 @@ protein language models: clean training code, multiple architectures, dense
 checkpoint sweeps, and pretrained model releases small enough that a single
 research group can re-train them.
 
-> Status: **v0.2 — first runnable training loop.** GPT-2-style decoder,
-> Muon+AdamW optimizer, BPE tokenizer, packing-aware UniRef50 loader,
-> FlashAttention-3 (with SDPA fallback), checkpointing, and single-node DDP
-> via torchrun. See the [roadmap](#roadmap) for what lands next.
+> Status: **v0.2.1 — runnable training loop, validated end-to-end on CPU.**
+> Patch over v0.2 that fixed the `save_checkpoint` and dataloader signature
+> mismatches, wired `training.precision` and `training.flash_attention` from
+> the YAML config through to the runtime, and added an end-to-end CPU
+> integration test. GPT-2-style decoder, Muon+AdamW optimizer, BPE tokenizer,
+> packing-aware UniRef50 loader, FlashAttention-3 (with SDPA fallback),
+> checkpointing, and single-node DDP via torchrun. See the
+> [roadmap](#roadmap) for what lands next.
 
 ---
 
@@ -141,7 +145,8 @@ that is printed once the model is instantiated in v0.2.)
 | Version | Status | What it adds |
 |---|---|---|
 | **v0.1** | shipped | Config schema, YAML loader, derivation rules, example config, tests |
-| **v0.2** | **shipped** | GPT-2 model, BPE tokenizer, UniRef50 packing loader, Muon+AdamW optimizer, FA3 with SDPA fallback, training loop, checkpointing, single-node DDP via torchrun |
+| **v0.2** | shipped | GPT-2 model, BPE tokenizer, UniRef50 packing loader, Muon+AdamW optimizer, FA3 with SDPA fallback, training loop, checkpointing, single-node DDP via torchrun |
+| **v0.2.1** | **shipped** | Patches: fixed `save_checkpoint` + dataloader signature regressions, wired `training.precision` and `training.flash_attention` through, added CPU end-to-end integration test, dump_config round-trip, seed inheritance, improved closed-form parameter estimate (includes value embeddings) |
 | **v0.3** | next | ESM-2-style masked encoder as a second architecture |
 | **v0.4** | next+1 | Mamba / SSM as a third architecture |
 | **v0.5** | next+2 | Hugging Face model release: pretrained nanoprot-{S,M,L} × {GPT-2, ESM-2, Mamba} checkpoints |

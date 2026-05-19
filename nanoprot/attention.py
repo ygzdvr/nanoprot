@@ -41,8 +41,13 @@ def _load_flash_attention_3():
 _fa3 = _load_flash_attention_3()
 HAS_FA3 = _fa3 is not None
 
-# Override for testing: set to 'fa3', 'sdpa', or None (auto)
+# Override for testing: set to 'fa3', 'sdpa', or None (auto). Can also be
+# forced via the NANOPROT_DISABLE_FA3 env var (set by scripts/train.py when
+# the YAML config sets training.flash_attention: false).
 _override_impl = None
+import os as _os
+if _os.environ.get("NANOPROT_DISABLE_FA3") in ("1", "true", "True"):
+    _override_impl = "sdpa"
 
 
 def _resolve_use_fa3():

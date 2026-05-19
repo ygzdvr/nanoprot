@@ -177,7 +177,15 @@ class TrainingConfig(BaseModel):
         default=True,
         description="Use FlashAttention-3 when available (Hopper GPUs). Falls back to PyTorch SDPA.",
     )
-    seed: int = Field(default=42, description="RNG seed for model init + data shuffling.")
+    seed: Optional[int] = Field(
+        default=None,
+        description=(
+            "RNG seed for model init + data shuffling. If null (default), "
+            "inherits from the top-level ``seed`` field. Set explicitly to "
+            "override for a specific training run while keeping the global "
+            "seed elsewhere."
+        ),
+    )
 
 
 class EvalConfig(BaseModel):
@@ -263,8 +271,8 @@ class NanoprotConfig(BaseModel):
         if self.tokenizer.path is not None:
             self.tokenizer.path = os.path.expandvars(self.tokenizer.path)
 
-        # Sync per-run seeds if the user only set the global one.
-        if self.training.seed == 42 and self.seed != 42:
+        # If the user did not set training.seed explicitly, inherit from cfg.seed.
+        if self.training.seed is None:
             self.training.seed = self.seed
 
         return self
@@ -272,20 +280,35 @@ class NanoprotConfig(BaseModel):
     # -- convenience ----------------------------------------------------------
 
     def estimate_params(self) -> int:
-        """Cheap closed-form estimate of total parameter count.
+        """Closed-form estimate of total parameter count.
 
         Used to derive ``training.total_residues`` when the user leaves it
-        ``null`` (Chinchilla-style data budget). Not exact — assumes a
-        standard transformer with tied embeddings and 12 d_model^2 per layer.
-        The real parameter count is logged by the training script after the
-        model is instantiated.
+        ``null`` (Chinchilla-style data budget). The closed form counts:
+
+        - transformer matrices: ``12 d^2 per layer`` (4d^2 attention QKV+proj,
+          8d^2 two-layer MLP);
+        - token embedding + untied lm_head: ``2 V d``;
+        - ResFormer-style value embeddings on alternating layers (gpt2 arch
+          only): ``ceil(n_layer / 2) * V * d_kv`` where ``d_kv = n_kv_heads
+          * head_dim``.
+
+        This is a lower bound — it omits small scalar params (resid/x0 lambdas,
+        smear gate, backout lambda). The real count is logged by the training
+        loop after the model is instantiated.
         """
-        d = self.model.d_model
-        assert d is not None  # derived in @model_validator
-        n_layer = self.model.depth
-        V = self.model.vocab_size
-        # 12 * d^2 per layer (4d^2 attention + 8d^2 MLP), embedding + lm_head
-        return 12 * d * d * n_layer + 2 * V * d
+        m = self.model
+        assert m.d_model is not None and m.n_kv_heads is not None  # derived
+        d = m.d_model
+        n_layer = m.depth
+        V = m.vocab_size
+        d_kv = m.n_kv_heads * m.head_dim
+        # Core transformer + embedding + lm_head
+        n = 12 * d * d * n_layer + 2 * V * d
+        # gpt2 also adds ResFormer value embeddings on alternating layers
+        if m.arch == "gpt2":
+            n_ve_layers = (n_layer + 1) // 2  # ceil(n_layer / 2)
+            n += n_ve_layers * V * d_kv
+        return n
 
     def total_residues(self) -> int:
         """Total residues to train on (explicit or Chinchilla-derived)."""
