@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+venv/
+.python-version
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editor / IDE / AI assistants
+.vscode/
+.idea/
+.cursor/
+.claude/
+*.swp
+.DS_Store
+
+# Project artifacts (data, checkpoints, logs, outputs)
+.cache/
+checkpoints/
+runs/output/
+logs/
+wandb/
+*.log
+*.out
+*.err
+data/raw/
+data/processed/
+*.parquet
+
+# Hugging Face cache
+hf_cache/
+
+# CLAUDE / draft markdown that shouldn't be public
+CLAUDE.md

@@ -1,0 +1,66 @@
+# Reference nanoprot-d20 config: 1.17 B-parameter decoder-only GPT-2-style
+# transformer trained on UniRef50 with a Chinchilla-style data budget
+# (residues = 12 * params). On a single 8x H100 node this trains in <3 h.
+
+name: nanoprot-d20-uniref50
+seed: 42
+
+model:
+  arch: gpt2
+  depth: 20
+  # d_model and n_heads are derived from depth + head_dim (left null on purpose):
+  #   d_model = 64 * 20 = 1280
+  #   n_heads = 1280 / 128 = 10
+  head_dim: 128
+  max_seq_len: 512
+  vocab_size: 50256
+  rope: true
+  qk_norm: true
+  mlp_activation: relu_squared
+  logit_softcap: 15.0
+  window_pattern: L           # full attention everywhere (SDPA-safe)
+
+tokenizer:
+  name: bpe
+  vocab_size: 50256
+  path: ${NANOPROT_BASE_DIR}/tokenizers/uniref50_bpe_50k.json
+
+data:
+  dataset: uniref50
+  shard_dir: ${NANOPROT_BASE_DIR}/uniref50_parquet
+  packing: bos_aligned_best_fit
+  val_shard: last
+
+optimizer:
+  name: muon_adamw
+  matrix_lr: 0.02             # Muon
+  embedding_lr: 0.3           # AdamW
+  unembedding_lr: 0.008       # AdamW
+  scalar_lr: 0.5              # AdamW
+  weight_decay: 0.28
+
+training:
+  total_residues: null        # null = derive from param_data_ratio * params
+  param_data_ratio: 12        # Chinchilla-style data budget
+  total_batch_size: 524288    # residues per optimizer step (held fixed for sweeps)
+  device_batch_size: 32
+  warmup_steps: 40
+  warmdown_ratio: 0.65
+  final_lr_frac: 0.05
+  precision: bf16
+  flash_attention: true       # FA3 on Hopper, SDPA fallback elsewhere
+
+eval:
+  eval_every: 250
+  eval_tokens: 41943040       # 80 * 524288 residues
+  metric: bpr
+
+logging:
+  run_name: d20
+  wandb_project: nanoprot
+  wandb_mode: offline
+
+checkpointing:
+  output_dir: ${NANOPROT_BASE_DIR}/checkpoints/prot_d20
+  save_every: -1              # save only at end
+  save_steps: []              # additional explicit step checkpoints
