@@ -42,12 +42,10 @@ class TestBuild:
         assert counts["value_embeds"] == 0
 
     def test_param_count_scales_with_depth(self) -> None:
-        cfg_small = _tiny_esm2_config()
-        cfg_small.model.depth = 2
-        cfg_big = _tiny_esm2_config()
-        cfg_big.model.depth = 6
-        cfg_small = NanoprotConfig.model_validate(cfg_small.model_dump())
-        cfg_big = NanoprotConfig.model_validate(cfg_big.model_dump())
+        from .conftest import re_derive_model_with
+        cfg_small = re_derive_model_with(_tiny_esm2_config(), depth=2)
+        cfg_big = re_derive_model_with(_tiny_esm2_config(), depth=6)
+        assert cfg_big.model.d_model > cfg_small.model.d_model  # width re-derived
         n_small = sum(p.numel() for p in build_model(cfg_small.model).parameters())
         n_big = sum(p.numel() for p in build_model(cfg_big.model).parameters())
         assert n_big > n_small

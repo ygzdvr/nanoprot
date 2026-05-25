@@ -116,23 +116,41 @@ def selective_scan_ref(
     in a serial Python loop. Correct on any device (CPU / GPU / MPS) but
     O(L) sequential; replace with a fused CUDA kernel for full-scale
     training on Hopper.
-    """
-    B, L, D = x.shape
-    N = A.shape[1]
-    # Discretize.
-    dt_A = dt.unsqueeze(-1) * A                # (B, L, D, N)
-    dA = torch.exp(dt_A)                       # (B, L, D, N)
-    dB = dt.unsqueeze(-1) * B_t.unsqueeze(2)   # (B, L, D, N)
 
-    h = torch.zeros(B, D, N, device=x.device, dtype=x.dtype)
+    All internal arithmetic runs in fp32 even when inputs are bf16/fp16.
+    Recurrences accumulate round-off step-by-step, so the recurrent state
+    ``h`` and its inputs (``dt * A``, ``exp(dt*A)``, ``dt * B``) must be
+    held at full precision to avoid drift over the sequence length. This
+    matches the upcasting performed by the official Mamba reference
+    implementation. The output is cast back to the input dtype before
+    return so callers see the same dtype they passed in.
+    """
+    in_dtype = x.dtype
+    # Upcast everything to fp32 for the recurrence.
+    x_f = x.float()
+    dt_f = dt.float()
+    A_f = A.float()
+    B_f = B_t.float()
+    C_f = C_t.float()
+    D_f = D_skip.float()
+
+    B, L, D = x_f.shape
+    N = A_f.shape[1]
+
+    # Discretize.
+    dt_A = dt_f.unsqueeze(-1) * A_f                # (B, L, D, N)
+    dA = torch.exp(dt_A)                           # (B, L, D, N)
+    dB = dt_f.unsqueeze(-1) * B_f.unsqueeze(2)     # (B, L, D, N)
+
+    h = torch.zeros(B, D, N, device=x_f.device, dtype=torch.float32)
     ys = []
     for t in range(L):
-        h = dA[:, t] * h + dB[:, t] * x[:, t].unsqueeze(-1)   # (B, D, N)
-        y_t = (h * C_t[:, t].unsqueeze(1)).sum(dim=-1)        # (B, D)
+        h = dA[:, t] * h + dB[:, t] * x_f[:, t].unsqueeze(-1)   # (B, D, N)
+        y_t = (h * C_f[:, t].unsqueeze(1)).sum(dim=-1)          # (B, D)
         ys.append(y_t)
-    y = torch.stack(ys, dim=1)                                # (B, L, D)
-    y = y + D_skip.unsqueeze(0).unsqueeze(0) * x              # skip
-    return y
+    y = torch.stack(ys, dim=1)                                  # (B, L, D)
+    y = y + D_f.unsqueeze(0).unsqueeze(0) * x_f                 # skip
+    return y.to(in_dtype)
 
 
 # ---------------------------------------------------------------------------
@@ -167,8 +185,12 @@ class MambaBlock(nn.Module):
         # Learned SSM parameters.
         # A is stored as A_log = log(-A) so A = -exp(A_log) is always negative
         # (decay) and A_log can be a free real parameter.
-        self.A_log = nn.Parameter(torch.empty(D_inner, N))
-        self.D = nn.Parameter(torch.empty(D_inner))
+        # We use torch.zeros (not torch.empty) so that direct construction
+        # without going through meta + to_empty + init_weights() yields a
+        # mathematically valid (if unconverged) model rather than NaN-prone
+        # uninitialized memory. init_weights() overwrites both regardless.
+        self.A_log = nn.Parameter(torch.zeros(D_inner, N))
+        self.D = nn.Parameter(torch.zeros(D_inner))
 
         self.out_proj = Linear(D_inner, D, bias=False)
         self.K = K
@@ -268,12 +290,14 @@ class Mamba(nn.Module):
             nn.init.normal_(blk.out_proj.weight, mean=0.0, std=std)
 
             # Δ-projection bias initialised so softplus(bias) is in [dt_min, dt_max],
-            # matching the Mamba paper recipe.
+            # matching the Mamba paper recipe. Allocate scratch on the param's
+            # own device so we don't cross PCIe for a single bias init.
             nn.init.normal_(blk.dt_proj.weight, mean=0.0, std=std)
+            dev = blk.dt_proj.bias.device
             dt_min_log = math.log(cfg.dt_min)
             dt_max_log = math.log(cfg.dt_max)
             dt_init = torch.exp(
-                torch.empty(blk.D_inner).uniform_() * (dt_max_log - dt_min_log) + dt_min_log
+                torch.empty(blk.D_inner, device=dev).uniform_() * (dt_max_log - dt_min_log) + dt_min_log
             ).clamp(min=cfg.dt_init_floor)
             # softplus^{-1}(x) = x + log(-expm1(-x))  (numerically stable for positive x)
             dt_inv = dt_init + torch.log(-torch.expm1(-dt_init))
@@ -286,7 +310,7 @@ class Mamba(nn.Module):
 
             # A_log: A = -exp(A_log). Initialise A to -1..-d_state per channel
             # (standard S4D-Real / Mamba init: A_n = -n for n=1..d_state).
-            n = torch.arange(1, cfg.d_state + 1, dtype=torch.float32)
+            n = torch.arange(1, cfg.d_state + 1, dtype=torch.float32, device=blk.A_log.device)
             A_init = torch.log(n.unsqueeze(0).expand(blk.D_inner, -1))
             blk.A_log.copy_(A_init)
 

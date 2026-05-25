@@ -51,15 +51,17 @@ class TestGpt2Build:
         assert n > 0
 
     def test_param_count_scales_with_depth(self) -> None:
-        small = _tiny_config()
-        small.model.depth = 2
-        big = _tiny_config()
-        big.model.depth = 6
-        # Re-derive after mutation
-        small = NanoprotConfig.model_validate(small.model_dump())
-        big = NanoprotConfig.model_validate(big.model_dump())
+        # Round-trip through re_derive_model_with so that d_model also
+        # re-derives from the new depth. Naive `cfg.model.depth = 6 +
+        # model_validate(model_dump())` is a silent no-op for width.
+        from .conftest import re_derive_model_with
+        small = re_derive_model_with(_tiny_config(), depth=2)
+        big = re_derive_model_with(_tiny_config(), depth=6)
+        # Width should actually have scaled — that's the whole point.
+        assert big.model.d_model > small.model.d_model
         n_small = sum(p.numel() for p in build_model(small.model).parameters())
         n_big = sum(p.numel() for p in build_model(big.model).parameters())
+        # More layers AND wider model => strictly more params.
         assert n_big > n_small
 
 

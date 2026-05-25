@@ -62,12 +62,12 @@ class TestBuild:
         assert m.num_scaling_params()["value_embeds"] == 0
 
     def test_param_count_scales_with_depth(self) -> None:
-        cfg_small = _tiny_mamba_config()
-        cfg_small.model.depth = 2
-        cfg_big = _tiny_mamba_config()
-        cfg_big.model.depth = 6
-        cfg_small = NanoprotConfig.model_validate(cfg_small.model_dump())
-        cfg_big = NanoprotConfig.model_validate(cfg_big.model_dump())
+        from .conftest import re_derive_model_with
+        cfg_small = re_derive_model_with(_tiny_mamba_config(), depth=2)
+        cfg_big = re_derive_model_with(_tiny_mamba_config(), depth=6)
+        # Width AND dt_rank must both have re-derived from the new depth.
+        assert cfg_big.model.d_model > cfg_small.model.d_model
+        assert cfg_big.model.dt_rank >= cfg_small.model.dt_rank
         n_small = sum(p.numel() for p in build_model(cfg_small.model).parameters())
         n_big = sum(p.numel() for p in build_model(cfg_big.model).parameters())
         assert n_big > n_small
@@ -160,6 +160,100 @@ class TestSelectiveScan:
         # y[:, 0] should be identical.
         assert torch.allclose(y1[:, 0], y2[:, 0], atol=1e-6), (
             "selective_scan_ref violates causality at t=0"
+        )
+
+    def test_scan_preserves_input_dtype(self) -> None:
+        """Output dtype must match input dtype (even though internals upcast
+        to fp32). This is the contract the surrounding model relies on when
+        composing with bf16 activations."""
+        B, L, D, N = 1, 6, 4, 4
+        for in_dtype in (torch.float32, torch.bfloat16):
+            x = torch.randn(B, L, D, dtype=in_dtype)
+            dt = (torch.rand(B, L, D) * 0.1).to(in_dtype)
+            A = -torch.exp(torch.randn(D, N)).to(in_dtype)
+            Bt = torch.randn(B, L, N, dtype=in_dtype)
+            Ct = torch.randn(B, L, N, dtype=in_dtype)
+            D_skip = torch.randn(D, dtype=in_dtype)
+            y = selective_scan_ref(x, dt, A, Bt, Ct, D_skip)
+            assert y.dtype == in_dtype, (
+                f"scan changed dtype: in={in_dtype} out={y.dtype}"
+            )
+
+    def test_scan_bf16_matches_fp32_internally(self) -> None:
+        """The bf16 scan (with internal fp32 upcast) must agree with the
+        pure-fp32 scan on the same numerical inputs, within bf16-quantization
+        tolerance. This is the test that would have FAILED before C1: if the
+        recurrence runs in bf16, ``h`` drifts and outputs diverge as L grows.
+        With internal fp32 upcasting, the only error source is the bf16
+        casting at function entry / exit."""
+        torch.manual_seed(0)
+        B, L, D, N = 2, 64, 8, 16
+        x = torch.randn(B, L, D)
+        dt = torch.rand(B, L, D) * 0.05
+        A = -torch.exp(torch.randn(D, N))
+        Bt = torch.randn(B, L, N)
+        Ct = torch.randn(B, L, N)
+        D_skip = torch.randn(D)
+
+        y_fp32 = selective_scan_ref(x, dt, A, Bt, Ct, D_skip)
+        y_bf16 = selective_scan_ref(
+            x.bfloat16(), dt.bfloat16(), A.bfloat16(),
+            Bt.bfloat16(), Ct.bfloat16(), D_skip.bfloat16(),
+        ).float()
+
+        rel_err = (y_fp32 - y_bf16).abs().max().item() / (y_fp32.abs().max().item() + 1e-9)
+        # bf16 has ~3 decimal digits of mantissa. With the input cast applied
+        # twice (in + out) we expect ~1% relative error. A regression that
+        # drops the internal fp32 upcast would show O(10%-100%) error.
+        assert rel_err < 0.05, (
+            f"bf16 scan deviates from fp32 by rel_err={rel_err:.4f}; this "
+            f"is the symptom of running the SSM recurrence in bf16 instead "
+            f"of upcasting to fp32 internally."
+        )
+
+
+class TestSafeDefaults:
+    """Direct construction (no meta + to_empty + init_weights) must yield a
+    finite, mathematically valid model. init_weights still gives the canonical
+    Mamba init, but these tests guard against latent NaN bugs of the kind
+    that hit v0.2.1's smear_gate."""
+
+    def test_a_log_and_d_finite_without_init_weights(self) -> None:
+        m = build_model(_tiny_mamba_config().model)
+        for resblock in m.transformer.h:
+            blk = resblock.mixer
+            assert torch.isfinite(blk.A_log).all(), "A_log has non-finite values"
+            assert torch.isfinite(blk.D).all(), "D has non-finite values"
+            # A = -exp(A_log) with A_log=0 gives A=-1 (canonical S4D-Real
+            # starting point). It's not the Mamba paper init, but it's the
+            # right sign and won't blow up.
+            assert (blk.A_log == 0.0).all(), (
+                "A_log default should be zero (so A = -1, stable decay)"
+            )
+            assert (blk.D == 0.0).all(), "D default should be zero (no skip)"
+
+
+class TestEstimateParams:
+    """The closed-form ``cfg.estimate_params()`` is used to derive the
+    Chinchilla training horizon when ``training.total_residues`` is null.
+    For Mamba we now use a per-arch formula; this test ensures it stays
+    within ~10% of the real instantiated parameter count, so the data
+    budget doesn't drift."""
+
+    def test_mamba_estimate_within_tolerance_of_actual(self) -> None:
+        cfg = _tiny_mamba_config()
+        m = build_model(cfg.model)
+        actual = sum(p.numel() for p in m.parameters())
+        estimated = cfg.estimate_params()
+        # Tolerance: formula omits small terms (conv1d, A_log, D, RMSNorm
+        # scalars, vocab padding from 64→64-multiple). Real ≤ formula+small.
+        # Should agree to within ~10% at this scale.
+        ratio = abs(estimated - actual) / max(actual, 1)
+        assert ratio < 0.10, (
+            f"Mamba estimate_params drift too large: "
+            f"estimated={estimated:,}, actual={actual:,}, ratio={ratio:.3f}. "
+            f"The closed-form formula in NanoprotConfig.estimate_params "
+            f"is out of sync with nanoprot.models.mamba.Mamba."
         )
 
 

@@ -1,6 +1,6 @@
 [project]
 name = "nanoprot"
-version = "0.2.1"
+version = "0.4.1"
 description = "A minimal, hackable, config-driven training framework for protein language models."
 readme = "README.md"
 license = { file = "LICENSE" }

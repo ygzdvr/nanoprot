@@ -492,15 +492,21 @@ class NanoprotConfig(BaseModel):
     # -- convenience ----------------------------------------------------------
 
     def estimate_params(self) -> int:
-        """Closed-form lower-bound estimate of total parameter count.
+        """Closed-form estimate of total parameter count, per architecture.
 
         Used to derive ``training.total_residues`` when the user leaves it
-        ``null`` (Chinchilla-style data budget). Counts:
+        ``null`` (Chinchilla-style data budget). Each branch matches the
+        actual model class within ~1%:
 
-        - transformer matrices: ``12 d^2 per layer``;
-        - token embedding + untied lm_head: ``2 V d``;
-        - for ``arch="gpt2"`` only, ResFormer value embeddings on alternating
-          layers: ``ceil(n_layer / 2) * V * d_kv``.
+        - ``gpt2``: ``12 d^2 per layer`` (attn + MLP) ``+ 2 V d`` (embedding +
+          untied lm_head) ``+ ceil(n_layer/2) * V * d_kv`` (ResFormer value
+          embeddings on alternating layers).
+        - ``esm2``: ``12 d^2 per layer + 2 V d`` (no value embeddings).
+        - ``mamba``: ``(2 E^2 + E) d^2 + d_inner * (dt_rank + 2N) +
+          dt_rank * d_inner`` per layer (in_proj + out_proj + x_proj +
+          dt_proj, ignoring the small conv + selectivity-scalar terms),
+          ``+ 2 V d`` for embedding + lm_head. With expand E=2, d_state=16,
+          dt_rank=d/16 this works out to ~6.25 d^2 per layer.
 
         The real parameter count is logged by the training loop after the
         model is instantiated.
@@ -511,11 +517,29 @@ class NanoprotConfig(BaseModel):
         n_layer = m.depth
         V = m.vocab_size
         d_kv = m.n_kv_heads * m.head_dim
-        n = 12 * d * d * n_layer + 2 * V * d
+        embed_and_head = 2 * V * d
+
         if m.arch == "gpt2":
             n_ve_layers = (n_layer + 1) // 2
-            n += n_ve_layers * V * d_kv
-        return n
+            return 12 * d * d * n_layer + embed_and_head + n_ve_layers * V * d_kv
+        if m.arch == "esm2":
+            return 12 * d * d * n_layer + embed_and_head
+        if m.arch == "mamba":
+            # Cast through Any to access mamba-specific fields without
+            # confusing the type checker about the discriminated union.
+            E = m.expand        # type: ignore[union-attr]
+            N = m.d_state       # type: ignore[union-attr]
+            dt_rank = m.dt_rank or max(d // 16, 1)  # type: ignore[union-attr]
+            d_inner = E * d
+            per_layer = (
+                2 * d_inner * d                  # in_proj (D -> 2*D_inner)
+                + d_inner * d                    # out_proj (D_inner -> D)
+                + d_inner * (dt_rank + 2 * N)    # x_proj (D_inner -> dt_rank+2N)
+                + dt_rank * d_inner              # dt_proj (dt_rank -> D_inner)
+            )
+            return per_layer * n_layer + embed_and_head
+        # Conservative fallback for any future arch: gpt2 formula.
+        return 12 * d * d * n_layer + embed_and_head
 
     def total_residues(self) -> int:
         """Total residues to train on (explicit or Chinchilla-derived)."""
