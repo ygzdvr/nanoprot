@@ -134,6 +134,41 @@ class TestTrainLoopEndToEnd:
         assert len(model_files) >= 1, f"no model checkpoints in {ckpt_dir}"
         assert len(meta_files) >= 1, f"no meta files in {ckpt_dir}"
 
+    def test_checkpoint_meta_is_self_describing(self, tmp_path: Path) -> None:
+        """The saved meta must carry the trained-artifact facts the model-card
+        generator depends on: real param count, FLOPs, residues, world size,
+        wall-clock, and the full resolved config. Guards the v0.5 self-
+        describing-checkpoint contract."""
+        import json
+
+        cfg = _tiny_config(tmp_path)
+        loader = _synthetic_loader(
+            vocab_size=cfg.model.vocab_size,
+            batch=cfg.training.device_batch_size,
+            seq_len=cfg.model.max_seq_len,
+            device="cpu",
+        )
+        train(cfg, device_type="cpu", train_loader=loader)
+
+        meta_path = sorted(Path(cfg.checkpointing.output_dir).glob("meta_*.json"))[-1]
+        meta = json.loads(meta_path.read_text())
+
+        # Trained-artifact facts present + sane.
+        assert isinstance(meta["n_params"], int) and meta["n_params"] > 0
+        assert meta["total_residues"] is not None and meta["total_residues"] > 0
+        assert meta["world_size"] == 1
+        assert meta["train_time_sec"] is not None and meta["train_time_sec"] >= 0.0
+        # total_flops == flops_per_token * total_residues (self-consistent).
+        assert meta["flops_per_token"] is not None
+        assert abs(
+            meta["total_flops"] - meta["flops_per_token"] * meta["total_residues"]
+        ) <= 1.0
+        # Full resolved config embedded + reproducible.
+        assert meta["config"]["model"]["arch"] == cfg.model.arch
+        assert meta["config"]["training"]["objective"] == cfg.training.objective
+        # version is dynamic, not the old hardcoded "0.3.0".
+        assert meta["version"] != "0.3.0"
+
     def test_train_loss_finite(self, tmp_path: Path) -> None:
         cfg = _tiny_config(tmp_path)
         loader = _synthetic_loader(

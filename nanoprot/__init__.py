@@ -1,6 +1,6 @@
 """nanoprot — a minimal, config-driven training framework for protein language models."""
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
 
 from nanoprot.config import (
     CheckpointConfig,

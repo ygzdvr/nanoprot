@@ -296,12 +296,18 @@ def train(
                 )
 
         # Periodic checkpoint
-        if (
+        save_now = (
             cfg.checkpointing.save_every > 0
             and step > 0
             and step % cfg.checkpointing.save_every == 0
-        ):
-            _save(cfg, step, model, optimizer, state, rank, num_iterations)
+        ) or (step in set(cfg.checkpointing.save_steps))
+        if save_now:
+            _save(
+                cfg, step, model, optimizer, state, rank, num_iterations,
+                n_params=n_params, flops_per_token=flops_per_token,
+                total_residues=total_residues, world_size=world_size,
+                train_time_sec=time.time() - t_start,
+            )
 
     # ---- Final eval + checkpoint -------------------------------------------
     if val_loader is not None and cfg.eval.eval_every > 0:
@@ -325,7 +331,12 @@ def train(
                 }
             )
 
-    _save(cfg, num_iterations, model, optimizer, state, rank, num_iterations)
+    _save(
+        cfg, num_iterations, model, optimizer, state, rank, num_iterations,
+        n_params=n_params, flops_per_token=flops_per_token,
+        total_residues=total_residues, world_size=world_size,
+        train_time_sec=time.time() - t_start,
+    )
 
     if not isinstance(wandb_run, DummyWandb):
         wandb_run.finish()
@@ -346,8 +357,31 @@ def _save(
     state: TrainState,
     rank: int,
     num_iterations: int,
+    *,
+    n_params: Optional[int] = None,
+    flops_per_token: Optional[float] = None,
+    total_residues: Optional[int] = None,
+    world_size: Optional[int] = None,
+    train_time_sec: Optional[float] = None,
 ) -> None:
-    """Save model + optimizer + meta in the format ``checkpoint.save_checkpoint`` expects."""
+    """Save model + optimizer + meta in the format ``checkpoint.save_checkpoint`` expects.
+
+    The metadata is written so the checkpoint is **self-describing**: it carries
+    the full resolved config plus the trained-artifact facts (real parameter
+    count, FLOPs/token, residues seen, wall-clock, world size) that downstream
+    tooling — the model-card generator in particular — reports without having to
+    re-instantiate the model.
+    """
+    try:
+        from nanoprot import __version__ as _nanoprot_version
+    except Exception:  # pragma: no cover - version import is best-effort
+        _nanoprot_version = "unknown"
+
+    total_flops = (
+        float(flops_per_token) * float(total_residues)
+        if (flops_per_token is not None and total_residues is not None)
+        else None
+    )
     meta = {
         "step": step,
         "smooth_loss": state.smooth_loss,
@@ -355,10 +389,21 @@ def _save(
         "last_val_bpr": state.last_val_bpr,
         "best_val_bpr": state.best_val_bpr,
         "num_iterations": num_iterations,
+        # Trained-artifact facts (new in v0.5; absent in older checkpoints).
+        "n_params": n_params,
+        "flops_per_token": flops_per_token,
+        "total_flops": total_flops,
+        "total_residues": total_residues,
+        "world_size": world_size,
+        "train_time_sec": train_time_sec,
+        # Config: keep model_config/training_config for back-compat with the
+        # v0.2 loader, AND embed the full resolved config so the checkpoint is
+        # fully reproducible from its own metadata.
         "model_config": cfg.model.model_dump(),
         "training_config": cfg.training.model_dump(),
+        "config": cfg.model_dump(),
         "name": cfg.name,
-        "version": "0.3.0",
+        "version": _nanoprot_version,
     }
     save_checkpoint(
         cfg.checkpointing.output_dir,

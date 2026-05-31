@@ -8,14 +8,16 @@ protein language models: clean training code, multiple architectures, dense
 checkpoint sweeps, and pretrained model releases small enough that a single
 research group can re-train them.
 
-> Status: **v0.4.1 — three architectures, hardened Mamba path.** GPT-2-style
+> Status: **v0.5.0 — release tooling for the model suite.** GPT-2-style
 > autoregressive decoders, ESM-2-style masked-LM encoders, AND Mamba
 > selective-SSM language models, all driven from a single YAML config
-> (`arch: gpt2|esm2|mamba`). Discriminated-union config schema; the
-> training loop dispatches the right model, tokenizer, data loader, and
-> objective from one place. Eval loop, checkpointing, single-node DDP via
-> torchrun. 98 unit + integration tests. See the [roadmap](#roadmap) for
-> what lands next.
+> (`arch: gpt2|esm2|mamba`). v0.5 adds the **model-release pipeline**: a
+> config generator for the 3-arch × 4-scale × 3-seed grid, a resumable
+> Slurm training array, a throughput calibration probe, self-describing
+> checkpoints, and an auto-generated HuggingFace model-card writer. The
+> pretrained checkpoints themselves are produced by running the array (see
+> `docs/v0.5_release_scope.md`). 99 unit + integration tests. See the
+> [roadmap](#roadmap).
 
 ---
 
@@ -56,7 +58,7 @@ checkpointing:
 That's a complete config. Everything else picks up sensible defaults from
 `nanoprot/config.py`.
 
-## What's in v0.4
+## What's in v0.5
 
 ```
 nanoprot/
@@ -94,8 +96,15 @@ nanoprot/
 │   └── mamba_small_uniref50.yaml ~30 M-param Mamba selective SSM (mamba + bpe + AR)
 ├── scripts/
 │   ├── train.py               training entry point (single GPU or torchrun)
-│   └── show_config.py         load + inspect any config (no training)
-├── tests/                     98 tests (87 fast, 11 slow integration)
+│   ├── show_config.py         load + inspect any config (no training)
+│   ├── gen_release_configs.py emits the 36-config release grid (v0.5)
+│   └── make_model_card.py     HF model cards from self-describing checkpoints (v0.5)
+├── runs/
+│   ├── train_release.slurm    resumable 36-cell training array (v0.5)
+│   └── calibrate_throughput.slurm  per-arch tok/s probe (v0.5)
+├── configs/release/           generated release grid + MANIFEST.tsv (v0.5)
+├── docs/v0.5_release_scope.md  the release spec + model-card schema
+├── tests/                     99 tests (87 fast, 12 slow integration)
 └── pyproject.toml             uv-managed (pydantic + pyyaml + torch)
 ```
 
@@ -113,9 +122,9 @@ python -m scripts.show_config configs/gpt2_d20_uniref50.yaml --estimate
 python -m scripts.show_config configs/esm2_650M_uniref50.yaml --estimate
 python -m scripts.show_config configs/mamba_small_uniref50.yaml --estimate
 
-# run the test suite (98 tests total)
+# run the test suite (99 tests total)
 pytest -m "not slow"        # 87 fast tests in ~1 s
-pytest                       # all 98 (includes ~3-min Mamba/loop integrations)
+pytest                       # all 99 (includes ~4-min Mamba/loop integrations)
 
 # launch training, single device — GPT-2 (autoregressive):
 python -m scripts.train --config configs/gpt2_d20_uniref50.yaml
@@ -167,8 +176,8 @@ that is printed once the model is instantiated in v0.2.)
 | **v0.3** | shipped | Discriminated-union `ModelConfig` (gpt2 \| esm2), ESM-2 encoder model + 33-token ESM-2 tokenizer, BERT-style MLM data loader (15% / 80/10/10), `training.objective` (ar \| mlm) loop dispatch, eval loop integration (val_bpr + best_val_bpr), bidirectional-attention SDPA path, 80 tests total, ESM-2 8M + 650M config presets |
 | **v0.4** | shipped | Mamba selective-SSM model (third arch in the discriminated union); depthwise causal conv + selective scan + gating + Pre-RMSNorm; pure-PyTorch reference scan (works on CPU/GPU/MPS); causal-by-construction so AR training pipeline reuses; new `MambaModelConfig` with `d_state`, `d_conv`, `expand`, auto-derived `dt_rank`; 14 Mamba tests including causality + scan correctness; `mamba_small_uniref50.yaml` config preset |
 | **v0.4.1** | **shipped** | Audit patches: (C1) `selective_scan_ref` now upcasts to fp32 internally to prevent recurrent bf16 drift, matching the official Mamba reference; (M2) safer zero defaults on `A_log`/`D` so direct construction without `init_weights()` is mathematically valid; (L1) `dt_init` scratch tensors allocated on the parameter's own device; (L2) per-arch `estimate_params` with a dedicated Mamba branch (the v0.4.0 formula over-counted Mamba by ~35%; now accurate to within 1%); (M1) fixed three `test_param_count_scales_with_depth` tests that were silently passing without actually re-deriving `d_model`; 4 new defensive tests (scan dtype preservation, bf16-vs-fp32 agreement, safe defaults, estimate-vs-actual). 98 tests total. |
-| **v0.5** | next+2 | Hugging Face model release: pretrained nanoprot-{S,M,L} × {GPT-2, ESM-2, Mamba} checkpoints |
-| **v0.6** | next+3 | Cross-architecture benchmark suite (probing + downstream) |
+| **v0.5** | **infra shipped** | Model-release pipeline: `gen_release_configs.py` (3 arch × 4 scale × 3 seed = 36-config grid, unified 33-token tokenizer), resumable `train_release.slurm` array, `calibrate_throughput.slurm`, self-describing checkpoints (real params/FLOPs/wall-clock in `meta`), `make_model_card.py` (HF cards with mean±std across seeds). Pretrained checkpoints pending GPU runs — see `docs/v0.5_release_scope.md` |
+| **v0.6** | next | Cross-architecture benchmark suite (probing + downstream) |
 | **v1.0** | when stable | Paper-ready release for MLSB / similar venue |
 
 ## Comparison to related projects
@@ -201,7 +210,7 @@ please cite the repository:
   title   = {nanoprot: a minimal training framework for protein language models},
   year    = {2026},
   url     = {https://github.com/ygzdvr/nanoprot},
-  version = {0.1.0},
+  version = {0.5.0},
 }
 ```
 
