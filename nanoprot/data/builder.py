@@ -74,6 +74,11 @@ def build_data_loader(
 
     tokenizer = build_tokenizer(cfg)
 
+    # The data directory comes from the config (env-vars already expanded). This
+    # is what makes `data.shard_dir` actually select the dataset; without it the
+    # loader falls back to the module-level default (English ClimbMix shards).
+    data_dir = cfg.data.shard_dir
+
     if cfg.training.objective == "ar":
         from nanoprot.data.dataloader import (
             tokenizing_distributed_data_loader_bos_bestfit,
@@ -84,6 +89,7 @@ def build_data_loader(
             cfg.model.max_seq_len,
             split=split,
             device=device,
+            data_dir=data_dir,
         )
 
     if cfg.training.objective == "mlm":
@@ -96,6 +102,7 @@ def build_data_loader(
             device=device,
             mlm_probability=cfg.training.mlm_probability,
             seed=cfg.training.seed,
+            data_dir=data_dir,
         )
 
     raise ValueError(

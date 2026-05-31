@@ -68,6 +68,21 @@ source "$NANOPROT_VENV/bin/activate"
 cd "$NANOPROT_REPO"
 
 # ---------------------------------------------------------------------------
+# Pre-flight: the release configs set data.shard_dir = $NANOPROT_BASE_DIR/
+# uniref50_parquet. Fail fast (with a clear message) if the data is not staged,
+# rather than burning a GPU allocation. NOTE: the built-in downloader
+# (python -m nanoprot.data.dataset) fetches English ClimbMix text, NOT proteins
+# — do not use it; stage tokenized UniRef50 parquet shards yourself.
+# ---------------------------------------------------------------------------
+DATA_DIR_EXPECTED="$NANOPROT_BASE_DIR/uniref50_parquet"
+if ! ls "$DATA_DIR_EXPECTED"/*.parquet >/dev/null 2>&1; then
+    echo "ERROR: no *.parquet shards found at $DATA_DIR_EXPECTED" >&2
+    echo "  Stage tokenized UniRef50 parquet shards there, or set NANOPROT_BASE_DIR" >&2
+    echo "  to a tree containing uniref50_parquet/, or edit data.shard_dir in the configs." >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
 # Pick this task's config (stable sorted order matches array indices 0..35).
 # ---------------------------------------------------------------------------
 mapfile -t CONFIGS < <(ls -1 "$NANOPROT_REPO"/configs/release/nanoprot-*.yaml | sort)

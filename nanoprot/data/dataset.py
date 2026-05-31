@@ -32,10 +32,22 @@ DATA_DIR = os.environ.get("NANOPROT_DATA_DIR", os.path.join(base_dir, "base_data
 
 def list_parquet_files(data_dir=None, warn_on_legacy=False):
     """ Looks into a data dir and returns full paths to all parquet files. """
+    explicit = data_dir is not None  # came from config.data.shard_dir
     data_dir = DATA_DIR if data_dir is None else data_dir
 
+    # An EXPLICIT shard_dir that does not exist is a user error: fail loudly and
+    # specifically. Never silently fall back to other data (e.g. the legacy
+    # ClimbMix shards) when the user named a directory — that would train on the
+    # wrong corpus without telling anyone.
+    if explicit and not os.path.exists(data_dir):
+        raise FileNotFoundError(
+            f"data.shard_dir does not exist: {data_dir}\n"
+            f"Point it at a directory of tokenized UniRef50 parquet shards "
+            f"(shard_*.parquet)."
+        )
+
     # Legacy-supporting code due to the upgrade from FinewebEdu-100B to ClimbMix-400B
-    # This code will eventually be deleted.
+    # This code will eventually be deleted. Only applies to the DEFAULT data dir.
     if not os.path.exists(data_dir):
         if warn_on_legacy:
             print()

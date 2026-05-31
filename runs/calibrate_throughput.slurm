@@ -60,6 +60,14 @@ export WANDB_MODE=offline
 source "$NANOPROT_VENV/bin/activate"
 cd "$NANOPROT_REPO"
 
+# Pre-flight: data must be staged (the built-in downloader fetches English
+# ClimbMix text, NOT proteins — do not use it).
+DATA_DIR_EXPECTED="$NANOPROT_BASE_DIR/uniref50_parquet"
+if ! ls "$DATA_DIR_EXPECTED"/*.parquet >/dev/null 2>&1; then
+    echo "ERROR: no *.parquet shards at $DATA_DIR_EXPECTED — stage UniRef50 data first." >&2
+    exit 1
+fi
+
 ARCHS=(gpt2 esm2 mamba)
 ARCH="${ARCHS[$SLURM_ARRAY_TASK_ID]}"
 CFG="$NANOPROT_REPO/configs/release/calib/calib-${ARCH}.yaml"

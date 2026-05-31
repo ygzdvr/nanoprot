@@ -139,6 +139,7 @@ def mlm_distributed_data_loader_bos_bestfit(
     tokenizer_batch_size: int = 128,
     buffer_size: int = 1000,
     seed: int | None = None,
+    data_dir: str | None = None,
 ) -> Iterator[Tuple[torch.Tensor, torch.Tensor]]:
     """MLM-targeted data loader, drop-in replacement for the AR loader.
 
@@ -169,6 +170,7 @@ def mlm_distributed_data_loader_bos_bestfit(
         tokenizer_batch_size=tokenizer_batch_size,
         device=device,
         buffer_size=buffer_size,
+        data_dir=data_dir,
     )
 
     for inputs, _ar_targets in ar_loader:
