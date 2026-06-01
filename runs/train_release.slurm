@@ -26,9 +26,14 @@
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=128G
 #SBATCH --gres=gpu:4
-#SBATCH --time=12:00:00
+#SBATCH --time=24:00:00
 #SBATCH --partition=ailab
 #SBATCH --array=0-35%8
+# NB: the L (~650M) cells are the long pole. There is no resume-from-checkpoint,
+# so --time must comfortably exceed the slowest cell or it restarts from step 0.
+# On clusters whose compute nodes lack internet (FA3 kernel can't download),
+# submit with: sbatch --export=ALL,NANOPROT_DISABLE_FA3=1 runs/train_release.slurm
+# so jobs skip the ~5-min FA3 download-retry and go straight to SDPA.
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=hd0216@princeton.edu
 
