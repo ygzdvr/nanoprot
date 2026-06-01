@@ -64,11 +64,35 @@ class Linear(nn.Linear):
         return F.linear(x, self.weight.to(dtype=x.dtype))
 
 
+class LayerNorm(nn.LayerNorm):
+    """LayerNorm that casts its affine params to the input dtype in forward.
+
+    Mirrors the custom :class:`Linear`: fp32 master params for the optimizer,
+    but the kernel runs in the activation dtype. Without this, bf16 activations
+    + fp32 weights raise ``RuntimeError: expected BFloat16 but found Float`` on
+    GPU (stock ``F.layer_norm`` does not auto-cast). CPU fp32 tests never hit it.
+    """
+
+    def forward(self, x):  # noqa: D401
+        w = self.weight.to(x.dtype) if self.weight is not None else None
+        b = self.bias.to(x.dtype) if self.bias is not None else None
+        return F.layer_norm(x, self.normalized_shape, w, b, self.eps)
+
+
+class RMSNorm(nn.RMSNorm):
+    """RMSNorm with the same dtype-cast (stock ``F.rms_norm`` only warns + takes
+    a slow path on a dtype mismatch; casting keeps it on the fast path)."""
+
+    def forward(self, x):  # noqa: D401
+        w = self.weight.to(x.dtype) if self.weight is not None else None
+        return F.rms_norm(x, self.normalized_shape, w, self.eps)
+
+
 def _build_norm(kind: str, dim: int) -> nn.Module:
     if kind == "layernorm":
-        return nn.LayerNorm(dim, eps=1e-5)
+        return LayerNorm(dim, eps=1e-5)
     if kind == "rmsnorm":
-        return nn.RMSNorm(dim, eps=1e-5)
+        return RMSNorm(dim, eps=1e-5)
     raise ValueError(f"unknown norm kind {kind!r}; use 'layernorm' or 'rmsnorm'")
 
 

@@ -84,11 +84,31 @@ class Linear(nn.Linear):
         return F.linear(x, self.weight.to(dtype=x.dtype), self.bias if self.bias is None else self.bias.to(dtype=x.dtype))
 
 
+class RMSNorm(nn.RMSNorm):
+    """RMSNorm that casts its affine params to the input dtype in forward (so
+    bf16 activations + fp32 master weights stay on the fast kernel path instead
+    of warning + falling back). Mirrors the custom :class:`Linear`."""
+
+    def forward(self, x):  # noqa: D401
+        w = self.weight.to(x.dtype) if self.weight is not None else None
+        return F.rms_norm(x, self.normalized_shape, w, self.eps)
+
+
+class LayerNorm(nn.LayerNorm):
+    """LayerNorm with the same dtype-cast — stock ``F.layer_norm`` raises
+    ``expected BFloat16 but found Float`` on bf16 activations + fp32 weights."""
+
+    def forward(self, x):  # noqa: D401
+        w = self.weight.to(x.dtype) if self.weight is not None else None
+        b = self.bias.to(x.dtype) if self.bias is not None else None
+        return F.layer_norm(x, self.normalized_shape, w, b, self.eps)
+
+
 def _build_norm(kind: str, dim: int) -> nn.Module:
     if kind == "rmsnorm":
-        return nn.RMSNorm(dim, eps=1e-5)
+        return RMSNorm(dim, eps=1e-5)
     if kind == "layernorm":
-        return nn.LayerNorm(dim, eps=1e-5)
+        return LayerNorm(dim, eps=1e-5)
     raise ValueError(f"unknown norm kind {kind!r}; use 'rmsnorm' or 'layernorm'")
 
 

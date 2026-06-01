@@ -41,6 +41,25 @@ class TestBuild:
         counts = m.num_scaling_params()
         assert counts["value_embeds"] == 0
 
+    def test_norms_cast_weight_to_input_dtype(self, monkeypatch) -> None:
+        """The norm must pass an INPUT-dtype weight to the functional. This is
+        the fix for the bf16/fp32 mismatch that crashed esm2 on GPU (`expected
+        BFloat16 but found Float`). The CUDA kernel is strict; CPU silently
+        upcasts, so a plain forward can't catch it — we assert the cast directly
+        by spying on the weight dtype that reaches F.layer_norm / F.rms_norm."""
+        import nanoprot.models.esm2 as e
+
+        seen = {}
+        real_ln, real_rms = e.F.layer_norm, e.F.rms_norm
+        monkeypatch.setattr(e.F, "layer_norm",
+                            lambda x, ns, w, b, eps: seen.__setitem__("w", w.dtype) or real_ln(x, ns, w, b, eps))
+        monkeypatch.setattr(e.F, "rms_norm",
+                            lambda x, ns, w, eps: seen.__setitem__("w", w.dtype) or real_rms(x, ns, w, eps))
+
+        for kind in ("layernorm", "rmsnorm"):
+            e._build_norm(kind, 32)(torch.randn(2, 4, 32, dtype=torch.bfloat16))
+            assert seen["w"] == torch.bfloat16, f"{kind} did not cast weight to input dtype"
+
     def test_param_count_scales_with_depth(self) -> None:
         from .conftest import re_derive_model_with
         cfg_small = re_derive_model_with(_tiny_esm2_config(), depth=2)
