@@ -98,13 +98,15 @@ nanoprot/
 │   ├── train.py               training entry point (single GPU or torchrun)
 │   ├── show_config.py         load + inspect any config (no training)
 │   ├── gen_release_configs.py emits the 36-config release grid (v0.5)
-│   └── make_model_card.py     HF model cards from self-describing checkpoints (v0.5)
+│   ├── make_model_card.py     HF model cards from self-describing checkpoints (v0.5)
+│   └── prepare_uniref50.py    UniRef50 FASTA -> shuffled parquet shards (v0.5)
 ├── runs/
+│   ├── prepare_uniref50.slurm CPU job: build the UniRef50 corpus (v0.5)
 │   ├── train_release.slurm    resumable 36-cell training array (v0.5)
-│   └── calibrate_throughput.slurm  per-arch tok/s probe (v0.5)
+│   └── calibrate_throughput.slurm  per-arch tok/s + bpr probe (v0.5)
 ├── configs/release/           generated release grid + MANIFEST.tsv (v0.5)
 ├── docs/v0.5_release_scope.md  the release spec + model-card schema
-├── tests/                     99 tests (87 fast, 12 slow integration)
+├── tests/                     104 tests (92 fast, 12 slow integration)
 └── pyproject.toml             uv-managed (pydantic + pyyaml + torch)
 ```
 
@@ -122,9 +124,9 @@ python -m scripts.show_config configs/gpt2_d20_uniref50.yaml --estimate
 python -m scripts.show_config configs/esm2_650M_uniref50.yaml --estimate
 python -m scripts.show_config configs/mamba_small_uniref50.yaml --estimate
 
-# run the test suite (99 tests total)
-pytest -m "not slow"        # 87 fast tests in ~1 s
-pytest                       # all 99 (includes ~4-min Mamba/loop integrations)
+# run the test suite (104 tests total)
+pytest -m "not slow"        # 92 fast tests in ~2 s
+pytest                       # all 104 (includes ~4-min Mamba/loop integrations)
 
 # launch training, single device — GPT-2 (autoregressive):
 python -m scripts.train --config configs/gpt2_d20_uniref50.yaml

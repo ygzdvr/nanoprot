@@ -77,8 +77,9 @@ cd "$NANOPROT_REPO"
 DATA_DIR_EXPECTED="$NANOPROT_BASE_DIR/uniref50_parquet"
 if ! ls "$DATA_DIR_EXPECTED"/*.parquet >/dev/null 2>&1; then
     echo "ERROR: no *.parquet shards found at $DATA_DIR_EXPECTED" >&2
-    echo "  Stage tokenized UniRef50 parquet shards there, or set NANOPROT_BASE_DIR" >&2
-    echo "  to a tree containing uniref50_parquet/, or edit data.shard_dir in the configs." >&2
+    echo "  Build the corpus first: sbatch runs/prepare_uniref50.slurm (after" >&2
+    echo "  downloading the FASTA on a login node). Or set NANOPROT_BASE_DIR /" >&2
+    echo "  data.shard_dir to a tree that already contains uniref50_parquet/." >&2
     exit 1
 fi
 

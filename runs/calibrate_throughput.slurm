@@ -64,7 +64,9 @@ cd "$NANOPROT_REPO"
 # ClimbMix text, NOT proteins — do not use it).
 DATA_DIR_EXPECTED="$NANOPROT_BASE_DIR/uniref50_parquet"
 if ! ls "$DATA_DIR_EXPECTED"/*.parquet >/dev/null 2>&1; then
-    echo "ERROR: no *.parquet shards at $DATA_DIR_EXPECTED — stage UniRef50 data first." >&2
+    echo "ERROR: no *.parquet shards at $DATA_DIR_EXPECTED" >&2
+    echo "  Build the corpus first: download the FASTA on a login node, then" >&2
+    echo "  sbatch runs/prepare_uniref50.slurm  (see that script's header)." >&2
     exit 1
 fi
 
