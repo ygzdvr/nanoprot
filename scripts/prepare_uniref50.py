@@ -36,9 +36,12 @@ A subset for quick calibration/smoke tests:
 from __future__ import annotations
 
 import argparse
+import datetime
 import gzip
+import json
 import os
 import random
+import re
 import sys
 import time
 from pathlib import Path
@@ -49,6 +52,26 @@ import pyarrow.parquet as pq
 
 
 _SCHEMA = pa.schema([("text", pa.string())])
+
+# Canonical source; the release served is whichever is current at download time.
+UNIREF50_URL = "https://ftp.uniprot.org/pub/databases/uniprot/uniref/uniref50/uniref50.fasta.gz"
+RELNOTES_URL = "https://ftp.uniprot.org/pub/databases/uniprot/relnotes.txt"
+_RELEASE_RE = re.compile(r"Release\s+(\d{4}_\d{2})\s+\((\d{2}-\w{3}-\d{4})\)")
+
+
+def detect_release(relnotes_path: Optional[Path]) -> tuple[Optional[str], Optional[str]]:
+    """Parse (version, date) from a UniProt relnotes.txt, e.g. ('2026_01',
+    '28-Jan-2026'). Returns (None, None) if the file is absent/unparseable.
+    Stage it next to the FASTA on the login node:
+        wget RELNOTES_URL -O $NANOPROT_BASE_DIR/relnotes.txt
+    """
+    if relnotes_path is None or not relnotes_path.exists():
+        return None, None
+    try:
+        m = _RELEASE_RE.search(relnotes_path.read_text(errors="replace"))
+        return (m.group(1), m.group(2)) if m else (None, None)
+    except Exception:
+        return None, None
 
 
 def _open_maybe_gzip(path: Path):
@@ -158,6 +181,14 @@ def main() -> int:
     ap.add_argument("--max-sequences", type=int, default=0, help="If >0, stop after N (subset).")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--compression", type=str, default="snappy")
+    ap.add_argument("--release-version", type=str, default=None,
+                    help="UniProt release (e.g. 2026_01). Auto-detected from "
+                         "--relnotes if omitted; recorded in provenance.json.")
+    ap.add_argument("--relnotes", type=Path, default=None,
+                    help="Path to UniProt relnotes.txt (default: next to the FASTA). "
+                         "Used to auto-detect the release version for provenance.")
+    ap.add_argument("--source-url", type=str, default=UNIREF50_URL,
+                    help="Source URL recorded in provenance.json.")
     args = ap.parse_args()
 
     if args.num_shards < 2:
@@ -196,11 +227,41 @@ def main() -> int:
                 print(f"  {kept:,} kept, {dropped:,} dropped, {(time.time()-t0)/60:.1f} min")
 
     n_shards = writers.close()
-    total_res = None  # residue count would need a second pass; report seqs only
+
+    # ---- provenance.json: make the corpus self-documenting so model cards can
+    # cite the exact UniRef50 release without anyone hand-recording it. ----
+    relnotes = args.relnotes if args.relnotes is not None else (fasta.parent / "relnotes.txt")
+    rel_ver, rel_date = (args.release_version, None)
+    if rel_ver is None:
+        rel_ver, rel_date = detect_release(relnotes)
+    provenance = {
+        "dataset": "UniRef50",
+        "source_url": args.source_url,
+        "release_version": rel_ver,            # e.g. "2026_01" or null if undetected
+        "release_date": rel_date,              # e.g. "28-Jan-2026" or null
+        "prepared_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+        "fasta_path": str(fasta),
+        "fasta_bytes": (fasta.stat().st_size if fasta.exists() else None),
+        "num_sequences": kept,
+        "num_dropped": dropped,
+        "num_shards": n_shards,
+        "min_len": args.min_len,
+        "max_len": args.max_len or None,
+        "max_sequences": args.max_sequences or None,
+        "seed": args.seed,
+        "tokenizer_alphabet": "esm2-33",
+    }
+    (args.out / "provenance.json").write_text(json.dumps(provenance, indent=2))
+
     print("=" * 60)
     print(f"  Done: {kept:,} sequences kept, {dropped:,} dropped")
     print(f"  Wrote {n_shards} non-empty shards to {args.out}")
+    print(f"  UniRef50 release: {rel_ver or 'UNKNOWN'}"
+          + (f" ({rel_date})" if rel_date else "")
+          + (" — pass --release-version or stage relnotes.txt next to the FASTA"
+             if rel_ver is None else ""))
     print(f"  Validation split = the last shard (highest-numbered).")
+    print(f"  Provenance: {args.out / 'provenance.json'}")
     print(f"  Elapsed: {(time.time()-t0)/60:.1f} min")
     print("=" * 60)
     if n_shards < 2:

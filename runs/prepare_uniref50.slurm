@@ -8,6 +8,10 @@
 #     mkdir -p "$NANOPROT_BASE_DIR"
 #     wget https://ftp.uniprot.org/pub/databases/uniprot/uniref/uniref50/uniref50.fasta.gz \
 #          -O "$NANOPROT_BASE_DIR/uniref50.fasta.gz"      # ~14 GB, takes a while
+#     # Also grab the release notes so the exact UniRef50 release is recorded in
+#     # provenance.json (and cited in the model cards) automatically:
+#     wget https://ftp.uniprot.org/pub/databases/uniprot/relnotes.txt \
+#          -O "$NANOPROT_BASE_DIR/relnotes.txt"
 #
 #   STEP 2 (this job — shards the downloaded FASTA):
 #     mkdir -p logs

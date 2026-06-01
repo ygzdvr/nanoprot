@@ -97,6 +97,23 @@ def _find_sibling_seeds(ckpt_dir: Path) -> List[Path]:
     return sibs or [ckpt_dir]
 
 
+def _load_provenance(meta: Dict[str, Any], ckpt_dir: Path) -> Optional[Dict[str, Any]]:
+    """Find the corpus provenance.json: prefer one already beside the checkpoint,
+    else read it from the training run's shard_dir (recorded in the embedded
+    config). Returns None if absent."""
+    candidates = [ckpt_dir / "provenance.json"]
+    shard_dir = ((meta.get("config") or {}).get("data") or {}).get("shard_dir")
+    if shard_dir:
+        candidates.append(Path(shard_dir) / "provenance.json")
+    for p in candidates:
+        if p.exists():
+            try:
+                return json.loads(p.read_text())
+            except Exception:
+                pass
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Formatting helpers
 # ---------------------------------------------------------------------------
@@ -140,7 +157,9 @@ def _mean_std(xs: List[float]) -> Tuple[Optional[float], Optional[float]]:
 # Card construction
 # ---------------------------------------------------------------------------
 
-def build_card(meta: Dict[str, Any], sibling_metas: List[Dict[str, Any]]) -> str:
+def build_card(meta: Dict[str, Any], sibling_metas: List[Dict[str, Any]], *,
+               provenance: Optional[Dict[str, Any]] = None,
+               hf_org: str = "ygzdvr") -> str:
     cfg = meta.get("config", {})
     model = cfg.get("model", meta.get("model_config", {}))
     train = cfg.get("training", meta.get("training_config", {}))
@@ -180,6 +199,22 @@ def build_card(meta: Dict[str, Any], sibling_metas: List[Dict[str, Any]]) -> str
 
     metric_value = f"{mu:.4f}" if mu is not None else "n/a"
     metric_pm = f" ± {sd:.4f} (n={n_seeds} seeds)" if (sd is not None and n_seeds > 1) else ""
+
+    # Training-data provenance (from the corpus's provenance.json, if present).
+    if provenance:
+        rv = provenance.get("release_version")
+        rel = f"UniRef50 release {rv}" if rv else "UniRef50 (release unspecified)"
+        rd = provenance.get("release_date")
+        if rd:
+            rel += f" ({rd})"
+        nseq = provenance.get("num_sequences")
+        data_desc = rel + (f", {nseq:,} sequences" if nseq else "") + \
+            "; held-out final shard for validation"
+        prepared = provenance.get("prepared_utc")
+    else:
+        data_desc = "UniRef50; held-out final shard for validation"
+        prepared = None
+    prepared_note = f" (corpus prepared {prepared})" if prepared else ""
 
     # ---- YAML front-matter ----
     front = {
@@ -279,7 +314,7 @@ same data, same tokenizer, one variable at a time.
 
 | | |
 |---|---|
-| Data | UniRef50 (held-out final shard for validation) |
+| Data | {data_desc} |
 | Tokenizer | `esm2` — 33-token residue alphabet (shared across the whole suite) |
 | Optimizer | Muon (matrices) + AdamW (embeddings/scalars), weight_decay={cfg.get('optimizer', {}).get('weight_decay')} |
 | Batch size | {_fmt_int(train.get('total_batch_size'))} residues/step |
@@ -329,12 +364,13 @@ model.eval()
 
 ## The nanoprot suite
 
-This model's sibling seeds:
+Hub: `{hf_org}/{base}` (seed 0 is the default; siblings on branches `seed1`,
+`seed2`). This model's sibling seeds:
 
 {sibling_links}
 
 The full suite spans `{{gpt2, esm2, mamba}} x {{XS, S, M, L}} x {{seed 0,1,2}}`.
-See the [nanoprot repository](https://github.com/ygzdvr/nanoprot) for the
+See the [nanoprot repository](https://github.com/{hf_org}/nanoprot) for the
 complete grid and the scaling-curve comparisons.
 
 ## Citation
@@ -350,8 +386,9 @@ complete grid and the scaling-curve comparisons.
 
 ## Reproducibility
 
-Trained with nanoprot v{version}. The exact, complete training config is in
-`config.yaml` (also embedded in `meta_{final_step:06d}.json`). Re-train with:
+Trained with nanoprot v{version}{prepared_note}. The exact, complete training
+config is in `config.yaml` (also embedded in `meta_{final_step:06d}.json`).
+Re-train with:
 
 ```bash
 python -m scripts.train --config config.yaml
@@ -365,7 +402,7 @@ python -m scripts.train --config config.yaml
 # ---------------------------------------------------------------------------
 
 def make_for_dir(ckpt_dir: Path, *, out: Optional[Path], siblings: bool,
-                 write_config: bool) -> Optional[Path]:
+                 write_config: bool, hf_org: str = "ygzdvr") -> Optional[Path]:
     meta = _final_meta(ckpt_dir)
     if meta is None:
         print(f"  [skip] no meta_*.json in {ckpt_dir}", file=sys.stderr)
@@ -392,10 +429,18 @@ def make_for_dir(ckpt_dir: Path, *, out: Optional[Path], siblings: bool,
             yaml.safe_dump(meta["config"], sort_keys=False)
         )
 
-    card = build_card(meta, sib_metas)
+    # Corpus provenance: read from the data dir, and ship a copy next to the
+    # weights so the released artifact records exactly which UniRef50 it saw.
+    provenance = _load_provenance(meta, ckpt_dir)
+    if provenance and not (ckpt_dir / "provenance.json").exists():
+        (ckpt_dir / "provenance.json").write_text(json.dumps(provenance, indent=2))
+
+    card = build_card(meta, sib_metas, provenance=provenance, hf_org=hf_org)
     out_path = out or (ckpt_dir / "README.md")
     out_path.write_text(card)
-    print(f"  wrote {out_path}  ({len(sib_metas)} seed(s) aggregated)")
+    rel = provenance.get("release_version") if provenance else None
+    print(f"  wrote {out_path}  ({len(sib_metas)} seed(s); "
+          f"UniRef50 {rel or 'release unknown'})")
     return out_path
 
 
@@ -409,6 +454,8 @@ def main() -> int:
     ap.add_argument("--no-siblings", action="store_true", help="Do not aggregate seeds.")
     ap.add_argument("--no-write-config", action="store_true",
                     help="Do not write config.yaml next to the checkpoint.")
+    ap.add_argument("--hf-org", type=str, default="ygzdvr",
+                    help="HuggingFace namespace for the model repos (default: ygzdvr).")
     args = ap.parse_args()
 
     siblings = not args.no_siblings
@@ -416,7 +463,7 @@ def main() -> int:
 
     if args.checkpoint_dir:
         make_for_dir(args.checkpoint_dir, out=args.out, siblings=siblings,
-                     write_config=write_config)
+                     write_config=write_config, hf_org=args.hf_org)
         return 0
 
     # release-root mode: one card per arch-scale (seed 0 is the headline dir);
@@ -435,7 +482,8 @@ def main() -> int:
     for base, dirs in sorted(by_base.items()):
         dirs.sort(key=lambda p: int(NAME_RE.match(p.name)["seed"]))
         head = dirs[0]  # lowest seed = headline
-        make_for_dir(head, out=None, siblings=siblings, write_config=write_config)
+        make_for_dir(head, out=None, siblings=siblings, write_config=write_config,
+                     hf_org=args.hf_org)
     return 0
 
 

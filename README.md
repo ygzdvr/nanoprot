@@ -16,7 +16,7 @@ research group can re-train them.
 > Slurm training array, a throughput calibration probe, self-describing
 > checkpoints, and an auto-generated HuggingFace model-card writer. The
 > pretrained checkpoints themselves are produced by running the array (see
-> `docs/v0.5_release_scope.md`). 99 unit + integration tests. See the
+> `docs/v0.5_release_scope.md`). 105 unit + integration tests. See the
 > [roadmap](#roadmap).
 
 ---
@@ -106,7 +106,7 @@ nanoprot/
 │   └── calibrate_throughput.slurm  per-arch tok/s + bpr probe (v0.5)
 ├── configs/release/           generated release grid + MANIFEST.tsv (v0.5)
 ├── docs/v0.5_release_scope.md  the release spec + model-card schema
-├── tests/                     104 tests (92 fast, 12 slow integration)
+├── tests/                     105 tests (93 fast, 12 slow integration)
 └── pyproject.toml             uv-managed (pydantic + pyyaml + torch)
 ```
 
@@ -124,9 +124,9 @@ python -m scripts.show_config configs/gpt2_d20_uniref50.yaml --estimate
 python -m scripts.show_config configs/esm2_650M_uniref50.yaml --estimate
 python -m scripts.show_config configs/mamba_small_uniref50.yaml --estimate
 
-# run the test suite (104 tests total)
-pytest -m "not slow"        # 92 fast tests in ~2 s
-pytest                       # all 104 (includes ~4-min Mamba/loop integrations)
+# run the test suite (105 tests total)
+pytest -m "not slow"        # 93 fast tests in ~2 s
+pytest                       # all 105 (includes ~4-min Mamba/loop integrations)
 
 # launch training, single device — GPT-2 (autoregressive):
 python -m scripts.train --config configs/gpt2_d20_uniref50.yaml

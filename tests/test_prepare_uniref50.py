@@ -28,6 +28,17 @@ prep = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(prep)  # type: ignore[union-attr]
 
 
+def test_detect_release_parses_relnotes(tmp_path: Path) -> None:
+    rn = tmp_path / "relnotes.txt"
+    rn.write_text(
+        "The UniProt consortium ... is pleased to announce UniProt Knowledgebase "
+        "(UniProtKB) Release 2026_01 (28-Jan-2026).\n"
+    )
+    assert prep.detect_release(rn) == ("2026_01", "28-Jan-2026")
+    # Missing/unparseable file -> (None, None), never raises.
+    assert prep.detect_release(tmp_path / "nope.txt") == (None, None)
+
+
 def test_iter_fasta_handles_multiline(tmp_path: Path) -> None:
     fasta = tmp_path / "x.fasta"
     fasta.write_text(
