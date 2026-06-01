@@ -116,6 +116,19 @@ def _build_norm(kind: str, dim: int) -> nn.Module:
 # Selective SSM scan (pure PyTorch reference)
 # ---------------------------------------------------------------------------
 
+# Fused CUDA selective scan (mamba_ssm). Optional: present only on a GPU build.
+# When unavailable (CPU / MPS / not installed) we fall back to the pure-PyTorch
+# reference scan below, so the model stays portable and the CPU tests are
+# unaffected. The pure-Python reference is ~hundreds of times slower than the
+# kernel and is not viable for full-scale training — hence this fast path.
+try:  # pragma: no cover - import guard, exercised only on a GPU build
+    from mamba_ssm.ops.selective_scan_interface import selective_scan_fn as _selective_scan_fn
+except Exception:  # pragma: no cover
+    _selective_scan_fn = None
+
+HAS_SELECTIVE_SCAN_CUDA = _selective_scan_fn is not None
+
+
 def selective_scan_ref(
     x: torch.Tensor,           # (B, L, D_inner)
     dt: torch.Tensor,          # (B, L, D_inner)
@@ -243,8 +256,28 @@ class MambaBlock(nn.Module):
         C_t = x_dbl[..., dt_rank + N:]                          # (B, L, N)
         dt = F.softplus(self.dt_proj(dt))                       # (B, L, D_inner)
 
-        A = -torch.exp(self.A_log.to(x_inner.dtype))            # (D_inner, N) negative
+        if _selective_scan_fn is not None and x_inner.is_cuda:
+            # Fused CUDA path. The kernel runs the scan in fp32 internally,
+            # adds the D skip, and fuses the SiLU(z) gating. It wants channel-
+            # first layouts: u/delta/z = (B, D_inner, L); B/C = (B, N, L); and
+            # fp32 A/D. ``dt`` is already softplus'd, so delta_softplus=False.
+            A_f = -torch.exp(self.A_log.float())                # (D_inner, N) fp32
+            y = _selective_scan_fn(
+                x_inner.transpose(1, 2).contiguous(),           # u     (B, D_inner, L)
+                dt.transpose(1, 2).contiguous(),                # delta (B, D_inner, L)
+                A_f,
+                B_t.transpose(1, 2).contiguous(),               # (B, N, L)
+                C_t.transpose(1, 2).contiguous(),               # (B, N, L)
+                self.D.float(),                                 # (D_inner,)
+                z=z_gate.transpose(1, 2).contiguous(),          # fuses SiLU gating
+                delta_bias=None,
+                delta_softplus=False,
+            )
+            y = y.transpose(1, 2)                               # (B, L, D_inner)
+            return self.out_proj(y)
 
+        # Portable reference path (CPU / MPS / no kernel): O(L) Python scan.
+        A = -torch.exp(self.A_log.to(x_inner.dtype))            # (D_inner, N) negative
         y = selective_scan_ref(x_inner, dt, A, B_t, C_t, self.D.to(x_inner.dtype))
         y = y * F.silu(z_gate)
         return self.out_proj(y)
