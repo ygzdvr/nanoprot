@@ -36,7 +36,8 @@ from scripts.gen_release_configs import (  # noqa: E402
 )
 
 
-def _sweep_config(arch: str, scale: str, ratio: float, seed: int) -> dict:
+def _sweep_config(arch: str, scale: str, ratio: float, seed: int,
+                  full_logging: bool = True) -> dict:
     cfg = _build_config_dict(arch, scale, seed, intermediate=False)
     rtag = f"{ratio:g}"
     name = f"nanoprot-sweep-{arch}-{scale}-r{rtag}-s{seed}"
@@ -45,6 +46,15 @@ def _sweep_config(arch: str, scale: str, ratio: float, seed: int) -> dict:
     cfg["training"]["total_residues"] = None  # derived = ratio * params
     cfg["logging"]["run_name"] = f"sweep-{arch}-{scale}-r{rtag}-s{seed}"
     cfg["checkpointing"]["output_dir"] = f"${{NANOPROT_BASE_DIR}}/sweep/{name}"
+    if full_logging:
+        # Full per-step history + fine, cheap validation — this is the data the
+        # detailed L(N,D) scaling analysis wants. eval_tokens is small so eval
+        # every 10 steps stays cheap (~8 val batches).
+        cfg["logging"]["history"] = True
+        cfg["logging"]["log_every"] = 1
+        cfg["eval"]["eval_every"] = 10
+        cfg["eval"]["eval_tokens"] = 524288
+        cfg["eval"]["compute_accuracy"] = True
     return cfg
 
 
@@ -56,6 +66,8 @@ def main() -> int:
     ap.add_argument("--scales", nargs="+", default=["S"])
     ap.add_argument("--ratios", type=float, nargs="+", default=[3, 6, 12, 24, 48, 96])
     ap.add_argument("--seeds", type=int, nargs="+", default=[0])
+    ap.add_argument("--no-full-logging", action="store_true",
+                    help="Disable per-step history + fine validation (on by default).")
     ap.add_argument("--force", action="store_true")
     args = ap.parse_args()
 
@@ -71,7 +83,8 @@ def main() -> int:
         for scale in args.scales:
             for ratio in args.ratios:
                 for seed in args.seeds:
-                    cfg = _sweep_config(arch, scale, ratio, seed)
+                    cfg = _sweep_config(arch, scale, ratio, seed,
+                                        full_logging=not args.no_full_logging)
                     v = _validate(cfg)
                     est = v.estimate_params()
                     D = int(ratio * est)

@@ -41,13 +41,16 @@ training:
   precision: bf16
   flash_attention: true
 eval:
-  eval_every: 250
-  eval_tokens: 41943040
+  eval_every: 10
+  eval_tokens: 524288
   metric: bpr
+  compute_accuracy: true
 logging:
   run_name: sweep-mamba-S-r12-s0
   wandb_project: nanoprot
   wandb_mode: offline
+  history: true
+  log_every: 1
 checkpointing:
   output_dir: ${NANOPROT_BASE_DIR}/sweep/nanoprot-sweep-mamba-S-r12-s0
   save_every: -1

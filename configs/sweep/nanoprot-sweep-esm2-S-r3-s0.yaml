@@ -39,13 +39,16 @@ training:
   flash_attention: false
   mlm_probability: 0.15
 eval:
-  eval_every: 250
-  eval_tokens: 41943040
+  eval_every: 10
+  eval_tokens: 524288
   metric: bpr
+  compute_accuracy: true
 logging:
   run_name: sweep-esm2-S-r3-s0
   wandb_project: nanoprot
   wandb_mode: offline
+  history: true
+  log_every: 1
 checkpointing:
   output_dir: ${NANOPROT_BASE_DIR}/sweep/nanoprot-sweep-esm2-S-r3-s0
   save_every: -1
