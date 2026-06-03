@@ -143,6 +143,56 @@ def find_last_step(checkpoint_dir):
     last_step = int(max(os.path.basename(f).split("_")[-1].split(".")[0] for f in checkpoint_files))
     return last_step
 
+
+def load_pretrained(checkpoint_dir, step=None, device="cpu", phase="eval",
+                    return_tokenizer=False):
+    """Architecture-aware loader for any nanoprot checkpoint (gpt2 / esm2 / mamba).
+
+    The legacy :func:`build_model` above is a v0.2 remnant: it hardcodes GPT +
+    the BPE tokenizer, so it cannot load esm2 or mamba checkpoints. This rebuilds
+    the model from the checkpoint's **embedded config** via the model registry,
+    so it works for every architecture, and loads the weights with the same
+    recipe the model cards document (meta-device build -> to_empty -> init_weights
+    -> strict load; bf16 -> float on CPU/MPS).
+
+    Returns ``(model, cfg, meta)``, or ``(model, cfg, meta, tokenizer)`` when
+    ``return_tokenizer=True``. Requires a v0.5+ checkpoint (meta carries the full
+    resolved config).
+    """
+    from nanoprot.config import NanoprotConfig
+    from nanoprot.models import build_model as registry_build_model
+
+    checkpoint_dir = str(checkpoint_dir)
+    dev = torch.device(device) if isinstance(device, str) else device
+    if step is None:
+        step = find_last_step(checkpoint_dir)
+    model_data, _, meta = load_checkpoint(checkpoint_dir, step, dev, load_optimizer=False)
+
+    cfg_dict = meta.get("config")
+    if not cfg_dict:
+        raise ValueError(
+            f"checkpoint meta ({checkpoint_dir}, step {step}) has no embedded "
+            "'config' — load_pretrained requires a v0.5+ self-describing checkpoint."
+        )
+    cfg = NanoprotConfig.model_validate(cfg_dict)
+
+    with torch.device("meta"):
+        model = registry_build_model(cfg.model)
+    model = model.to_empty(device=dev)
+    model.init_weights()  # materialise buffers (e.g. RoPE tables) before loading
+
+    sd = {k.removeprefix("_orig_mod."): v for k, v in model_data.items()}
+    if dev.type in ("cpu", "mps"):
+        sd = {k: (v.float() if v.dtype == torch.bfloat16 else v) for k, v in sd.items()}
+    model.load_state_dict(sd, strict=True, assign=True)
+    model.eval() if phase == "eval" else model.train()
+    log0(f"Loaded {cfg.model.arch} checkpoint ({checkpoint_dir}, step {step})")
+
+    if return_tokenizer:
+        from nanoprot.data.builder import build_tokenizer
+        return model, cfg, meta, build_tokenizer(cfg)
+    return model, cfg, meta
+
 # -----------------------------------------------------------------------------
 # convenience functions that take into account nanoprot's directory structure
 
