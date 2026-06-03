@@ -341,25 +341,19 @@ not aligned to any downstream task out of the box.
 
 ## How to load
 
-This snippet works for **any** nanoprot architecture (the registry builder is
-arch-aware). The checkpoint ships with a `config.yaml` written from its own
-metadata.
+Install nanoprot (`pip install nanoprot`), download this repo, and point the
+arch-aware loader at the folder — it works for **any** nanoprot architecture
+(gpt2 / esm2 / mamba), reading the embedded config and selecting the right
+tokenizer automatically.
 
 ```python
-import torch, yaml
-from nanoprot.config import load_config
-from nanoprot.models import build_model
+from nanoprot.training.checkpoint import load_pretrained
 
-cfg = load_config("config.yaml")          # shipped alongside the weights
-model = build_model(cfg.model)            # built on the meta device (arch-aware)
-model = model.to_empty(device="cpu")
-model.init_weights()                       # initialises buffers (e.g. RoPE tables)
-
-sd = torch.load("model_{final_step:06d}.pt", map_location="cpu")
-sd = {{k.removeprefix("_orig_mod."): v for k, v in sd.items()}}
-sd = {{k: (v.float() if v.dtype == torch.bfloat16 else v) for k, v in sd.items()}}
-model.load_state_dict(sd, strict=True, assign=True)
+model, cfg, meta, tokenizer = load_pretrained(
+    "path/to/this/repo", device="cpu", return_tokenizer=True,
+)
 model.eval()
+# meta carries the trained-artifact facts (params, FLOPs, val metric, ...)
 ```
 
 ## The nanoprot suite
