@@ -403,6 +403,13 @@ class EvalConfig(BaseModel):
         default="bpr",
         description="Primary intrinsic metric. ``bpr`` = bits per residue.",
     )
+    compute_accuracy: bool = Field(
+        default=False,
+        description=(
+            "Also compute next-/masked-token argmax accuracy during validation. "
+            "Costs one extra logits pass per eval batch; off by default."
+        ),
+    )
 
 
 class LoggingConfig(BaseModel):
@@ -411,6 +418,19 @@ class LoggingConfig(BaseModel):
     run_name: str = Field(default="default")
     wandb_project: str = Field(default="nanoprot")
     wandb_mode: Literal["online", "offline", "disabled"] = "offline"
+    log_every: int = Field(
+        default=10,
+        gt=0,
+        description="Steps between stdout/wandb training-metric logs.",
+    )
+    history: bool = Field(
+        default=False,
+        description=(
+            "Write a per-step training history to history.jsonl in the checkpoint "
+            "dir (train metrics every step, eval metrics every eval pass). Off by "
+            "default so existing runs are unaffected; the analysis tools read it."
+        ),
+    )
 
 
 class CheckpointConfig(BaseModel):

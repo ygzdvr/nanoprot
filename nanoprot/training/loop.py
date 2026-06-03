@@ -15,7 +15,9 @@ when omitted, the real loaders are constructed via
 
 from __future__ import annotations
 
+import json
 import math
+import os
 import time
 from dataclasses import dataclass
 from typing import Iterator, Optional, Tuple
@@ -96,6 +98,52 @@ def evaluate(
     if was_training:
         model.train()
     return sum(losses) / len(losses)
+
+
+@torch.no_grad()
+def evaluate_metrics(
+    model: torch.nn.Module,
+    val_loader: Iterator[Tuple[torch.Tensor, torch.Tensor]],
+    num_batches: int,
+    compute_accuracy: bool = False,
+) -> dict:
+    """Validation loss (+ optional argmax token accuracy) over ``num_batches``.
+
+    With ``compute_accuracy=False`` this returns exactly the same loss as
+    :func:`evaluate` — the loop uses it as a drop-in so the default path is
+    unchanged. Accuracy is next-token (AR) or masked-token (MLM) argmax accuracy
+    over the supervised positions (``targets != -100``), at the cost of one extra
+    logits pass per batch.
+    """
+    if num_batches <= 0:
+        return {"loss": float("nan"), "accuracy": None}
+    was_training = model.training
+    model.eval()
+    losses = []
+    n_correct = n_total = 0
+    for _ in range(num_batches):
+        idx, targets = next(val_loader)
+        losses.append(float(model(idx, targets=targets).detach()))
+        if compute_accuracy:
+            preds = model(idx).argmax(dim=-1)
+            mask = targets != -100
+            n_correct += int((preds[mask] == targets[mask]).sum())
+            n_total += int(mask.sum())
+    if was_training:
+        model.train()
+    acc = (n_correct / n_total) if (compute_accuracy and n_total > 0) else None
+    return {"loss": sum(losses) / len(losses), "accuracy": acc}
+
+
+def _write_history(path: str, records: list) -> None:
+    """Write the per-step/-eval training history as JSON Lines (best-effort)."""
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            for r in records:
+                f.write(json.dumps(r) + "\n")
+    except Exception as e:  # pragma: no cover - logging must never crash training
+        print0(f"  [history] failed to write {path}: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +266,15 @@ def train(
     # Number of val batches per eval pass (derived from eval_tokens).
     eval_batches = max(cfg.eval.eval_tokens // max(world_tokens_per_fwdbwd, 1), 1)
 
+    # Optional per-step training history (off by default; the analysis tools read
+    # history.jsonl). Timing is tracked regardless (cheap) but only recorded when
+    # logging.history is on, so the default path is unchanged.
+    history: list = []
+    history_path = os.path.join(cfg.checkpointing.output_dir, "history.jsonl")
+    write_history = cfg.logging.history and master
+    t_prev = t_start
+    cum_tokens = 0
+
     model.train()
     for step in range(num_iterations):
         state.step = step
@@ -249,7 +306,23 @@ def train(
             0.9 * state.smooth_loss + 0.1 * loss_accum if step > 0 else loss_accum
         )
 
-        if step % 10 == 0 and master:
+        # Per-step timing (for compute-time analysis).
+        now = time.time()
+        dt_step = now - t_prev
+        t_prev = now
+        cum_tokens += cfg.training.total_batch_size
+        step_tok_per_sec = cfg.training.total_batch_size / max(dt_step, 1e-6)
+
+        # Full per-step training history (off by default).
+        if write_history:
+            history.append({
+                "type": "train", "step": step, "loss": loss_accum,
+                "smooth_loss": state.smooth_loss, "lr_mult": mult,
+                "dt_sec": dt_step, "tok_per_sec": step_tok_per_sec,
+                "tokens": cum_tokens, "wall_sec": now - t_start,
+            })
+
+        if step % cfg.logging.log_every == 0 and master:
             dt = time.time() - t_start
             tok_per_sec = (step + 1) * cfg.training.total_batch_size / max(dt, 1e-6)
             print0(
@@ -274,26 +347,39 @@ def train(
             and step > 0
             and step % cfg.eval.eval_every == 0
         ):
-            val_loss = evaluate(model, val_loader, eval_batches)
+            vm = evaluate_metrics(model, val_loader, eval_batches, cfg.eval.compute_accuracy)
+            val_loss = vm["loss"]
             # bits-per-residue: loss is natural-log cross-entropy; convert to bits.
             val_bpr = val_loss / math.log(2)
+            val_ppl = math.exp(val_loss)
             state.last_val_loss = val_loss
             state.last_val_bpr = val_bpr
             if val_bpr < state.best_val_bpr:
                 state.best_val_bpr = val_bpr
             if master:
+                acc_s = f" acc={vm['accuracy']:.4f}" if vm["accuracy"] is not None else ""
                 print0(
                     f"  [eval] step {step}: val_loss={val_loss:.4f} "
-                    f"val_bpr={val_bpr:.4f} (best={state.best_val_bpr:.4f})"
+                    f"val_bpr={val_bpr:.4f} ppl={val_ppl:.3f}{acc_s} "
+                    f"(best={state.best_val_bpr:.4f})"
                 )
                 wandb_run.log(
                     {
                         "step": step,
                         "val_loss": val_loss,
                         "val_bpr": val_bpr,
+                        "val_ppl": val_ppl,
+                        "val_accuracy": vm["accuracy"],
                         "best_val_bpr": state.best_val_bpr,
                     }
                 )
+                if write_history:
+                    history.append({
+                        "type": "eval", "step": step, "val_loss": val_loss,
+                        "val_bpr": val_bpr, "val_ppl": val_ppl,
+                        "val_accuracy": vm["accuracy"], "tokens": cum_tokens,
+                        "wall_sec": time.time() - t_start,
+                    })
 
         # Periodic checkpoint
         save_now = (
@@ -308,28 +394,42 @@ def train(
                 total_residues=total_residues, world_size=world_size,
                 train_time_sec=time.time() - t_start,
             )
+            if write_history:
+                _write_history(history_path, history)
 
     # ---- Final eval + checkpoint -------------------------------------------
     if val_loader is not None and cfg.eval.eval_every > 0:
-        val_loss = evaluate(model, val_loader, eval_batches)
+        vm = evaluate_metrics(model, val_loader, eval_batches, cfg.eval.compute_accuracy)
+        val_loss = vm["loss"]
         val_bpr = val_loss / math.log(2)
+        val_ppl = math.exp(val_loss)
         state.last_val_loss = val_loss
         state.last_val_bpr = val_bpr
         if val_bpr < state.best_val_bpr:
             state.best_val_bpr = val_bpr
         if master:
+            acc_s = f" acc={vm['accuracy']:.4f}" if vm["accuracy"] is not None else ""
             print0(
                 f"  [final eval] val_loss={val_loss:.4f} val_bpr={val_bpr:.4f} "
-                f"(best={state.best_val_bpr:.4f})"
+                f"ppl={val_ppl:.3f}{acc_s} (best={state.best_val_bpr:.4f})"
             )
             wandb_run.log(
                 {
                     "step": num_iterations,
                     "val_loss": val_loss,
                     "val_bpr": val_bpr,
+                    "val_ppl": val_ppl,
+                    "val_accuracy": vm["accuracy"],
                     "best_val_bpr": state.best_val_bpr,
                 }
             )
+            if write_history:
+                history.append({
+                    "type": "eval", "step": num_iterations, "val_loss": val_loss,
+                    "val_bpr": val_bpr, "val_ppl": val_ppl,
+                    "val_accuracy": vm["accuracy"], "tokens": cum_tokens,
+                    "wall_sec": time.time() - t_start,
+                })
 
     _save(
         cfg, num_iterations, model, optimizer, state, rank, num_iterations,
@@ -337,6 +437,8 @@ def train(
         total_residues=total_residues, world_size=world_size,
         train_time_sec=time.time() - t_start,
     )
+    if write_history:
+        _write_history(history_path, history)
 
     if not isinstance(wandb_run, DummyWandb):
         wandb_run.finish()

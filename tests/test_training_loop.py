@@ -207,6 +207,40 @@ class TestTrainLoopEndToEnd:
         assert math.isfinite(state.last_val_loss)
         assert state.best_val_bpr <= state.last_val_bpr  # best is min over passes
 
+    def test_history_jsonl_full_logging(self, tmp_path: Path) -> None:
+        """With logging.history on, history.jsonl records a train row PER STEP
+        and an eval row per pass (with perplexity + accuracy). Guards the opt-in
+        full-logging path (the default path is covered by the other tests)."""
+        import json
+
+        cfg = _tiny_config(tmp_path)
+        cfg.logging.history = True
+        cfg.logging.log_every = 1
+        cfg.eval.eval_every = 1          # eval every step
+        cfg.eval.eval_tokens = 32
+        cfg.eval.compute_accuracy = True
+        train_loader = _synthetic_loader(cfg.model.vocab_size,
+                                         cfg.training.device_batch_size, cfg.model.max_seq_len)
+        val_loader = _synthetic_loader(cfg.model.vocab_size,
+                                       cfg.training.device_batch_size, cfg.model.max_seq_len)
+        train(cfg, device_type="cpu", train_loader=train_loader, val_loader=val_loader)
+
+        hist = Path(cfg.checkpointing.output_dir) / "history.jsonl"
+        assert hist.exists(), "history.jsonl not written"
+        recs = [json.loads(line) for line in hist.read_text().splitlines()]
+        train_rows = [r for r in recs if r["type"] == "train"]
+        eval_rows = [r for r in recs if r["type"] == "eval"]
+
+        n_iter = cfg.total_residues() // cfg.training.total_batch_size
+        assert len(train_rows) == n_iter                      # one per step
+        for r in train_rows:                                  # compute-time fields present
+            assert {"loss", "lr_mult", "dt_sec", "tok_per_sec", "tokens", "wall_sec"} <= r.keys()
+        assert train_rows[-1]["tokens"] == n_iter * cfg.training.total_batch_size
+        assert len(eval_rows) >= 1
+        assert eval_rows[0]["val_accuracy"] is not None       # accuracy computed
+        assert 0.0 <= eval_rows[0]["val_accuracy"] <= 1.0
+        assert eval_rows[0]["val_ppl"] > 1.0                  # perplexity = exp(loss)
+
     def test_train_works_for_esm2_mlm_objective(self, tmp_path: Path) -> None:
         """Same end-to-end loop, but with arch=esm2 and objective=mlm."""
         DEVICE_BATCH = 2
