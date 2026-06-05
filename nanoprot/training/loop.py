@@ -34,7 +34,9 @@ from nanoprot.runtime import (
     autodetect_device_type,
     compute_cleanup,
     compute_init,
+    get_peak_flops,
     print0,
+    print_banner,
 )
 from nanoprot.training.checkpoint import save_checkpoint
 
@@ -188,13 +190,30 @@ def train(
     if device_type == "cuda":
         torch.cuda.manual_seed_all(cfg.seed)
 
-    # ---- Build model on meta device, then materialise ---------------------
-    print0(
-        f"Building model: arch={cfg.model.arch}, depth={cfg.model.depth}, "
-        f"d_model={cfg.model.d_model}, n_heads={cfg.model.n_heads}, "
-        f"objective={cfg.training.objective}"
-    )
+    # ---- Banner + environment ----------------------------------------------
+    print_banner()
+    print0(f"Run: {cfg.name}   |   arch={cfg.model.arch}  objective={cfg.training.objective}  "
+           f"tokenizer={cfg.tokenizer.name}")
+    print0(f"Device: {device_type}   |   world size: {world_size}")
+    if device_type == "cuda":
+        gpu_name = torch.cuda.get_device_name(0)
+        try:
+            print0(f"GPU: {gpu_name} | Peak FLOPS (BF16): {get_peak_flops(gpu_name):.2e}")
+        except Exception:
+            print0(f"GPU: {gpu_name}")
     print0(f"COMPUTE_DTYPE: {COMPUTE_DTYPE} ({COMPUTE_DTYPE_REASON})")
+    try:
+        from nanoprot.attention import USE_FA3
+        print0(f"Attention: {'Flash Attention 3 (Hopper)' if USE_FA3 else 'PyTorch SDPA'}")
+    except Exception:  # pragma: no cover - attention import is best-effort here
+        pass
+    print0(
+        f"Model: arch={cfg.model.arch}, depth={cfg.model.depth}, "
+        f"d_model={cfg.model.d_model}, n_heads={cfg.model.n_heads}"
+    )
+    print0(f"Model config:\n{json.dumps(cfg.model.model_dump(), indent=2)}")
+
+    # ---- Build model on meta device, then materialise ---------------------
     with torch.device("meta"):
         model = build_model(cfg.model)
     model = model.to_empty(device=device)
@@ -220,6 +239,9 @@ def train(
     else:
         total_residues = int(total_residues)
     num_iterations = total_residues // cfg.training.total_batch_size
+    print0(f"Total training residues: {total_residues:,}  "
+           f"(residues : params ratio = {total_residues / max(n_params, 1):.2f})")
+    print0(f"Total training FLOPs (est): {flops_per_token * total_residues:e}")
     print0(f"Number of optimization iterations: {num_iterations:,}")
 
     # ---- Optimizer ---------------------------------------------------------
@@ -254,17 +276,24 @@ def train(
     state = TrainState()
     t_start = time.time()
 
-    world_tokens_per_fwdbwd = (
-        cfg.training.device_batch_size * cfg.model.max_seq_len * world_size
-    )
+    tokens_per_rank = cfg.training.device_batch_size * cfg.model.max_seq_len
+    world_tokens_per_fwdbwd = tokens_per_rank * world_size
     grad_accum_steps = max(cfg.training.total_batch_size // world_tokens_per_fwdbwd, 1)
-    print0(
-        f"World tokens per fwd+bwd: {world_tokens_per_fwdbwd:,}; "
-        f"gradient accumulation = {grad_accum_steps}"
-    )
+    print0(f"Tokens / micro-batch / rank: {cfg.training.device_batch_size} x "
+           f"{cfg.model.max_seq_len} = {tokens_per_rank:,}")
+    print0(f"Tokens / micro-batch (all ranks): {world_tokens_per_fwdbwd:,}")
+    print0(f"Total batch size {cfg.training.total_batch_size:,} => "
+           f"gradient accumulation steps: {grad_accum_steps}")
 
     # Number of val batches per eval pass (derived from eval_tokens).
     eval_batches = max(cfg.eval.eval_tokens // max(world_tokens_per_fwdbwd, 1), 1)
+
+    # Step-0 validation: the starting point (≈ log2(vocab) at init), so the
+    # training trajectory has an anchor before any optimization.
+    if val_loader is not None and cfg.eval.eval_every > 0:
+        v0 = evaluate_metrics(model, val_loader, eval_batches)["loss"]
+        if master and v0 == v0:  # not NaN
+            print0(f"Step {0:05d} | Validation bpr: {v0 / math.log(2):.4f}")
 
     # Optional per-step training history (off by default; the analysis tools read
     # history.jsonl). Timing is tracked regardless (cheap) but only recorded when
