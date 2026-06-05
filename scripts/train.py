@@ -86,9 +86,12 @@ def main() -> int:
     from nanoprot.training.loop import train
 
     cfg = load_config(args.config)
-    print(f"Loaded config: {cfg.name}  ({args.config})")
+    rank0 = int(os.environ.get("RANK", 0)) == 0
+    if rank0:
+        print(f"Loaded config: {cfg.name}  ({args.config})")
     state = train(cfg, device_type=args.device)
-    print(f"Finished at step {state.step}, smoothed loss {state.smooth_loss:.4f}")
+    if rank0:  # only rank 0 prints, not every DDP rank
+        print(f"Finished at step {state.step}, smoothed loss {state.smooth_loss:.4f}")
     return 0
 
 

@@ -64,6 +64,7 @@ export XDG_CACHE_HOME="$NANOPROT_REPO/.cache"
 export TORCH_HOME="$NANOPROT_REPO/.cache/torch"
 export TOKENIZERS_PARALLELISM=false
 export WANDB_MODE=offline
+export HF_HUB_OFFLINE=1   # compute nodes have no internet; skip the FA3 kernel download retry
 
 # ---------------------------------------------------------------------------
 # Environment.
