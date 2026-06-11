@@ -5,6 +5,20 @@ from scratch on **UniRef50 (release 2026_01, 60,251,814 sequences)** under a mat
 compute-optimal data budget (residues = 12 × parameters), 512-residue context, the
 shared 33-token ESM-2 residue alphabet. Per-cell data in [`results/results.csv`](results/results.csv).
 
+## Models
+
+All 12 `(arch, scale)` models (each carrying its 3 seeds) are public on the Hub:
+**[🤗 nanoprot v0.5 collection](https://huggingface.co/collections/yagizdevre/nanoprot-v05-protein-lm-scaling-suite-6a2ad647b6cc80fa1b846cf4)**
+— `yagizdevre/nanoprot-{gpt2,mamba,esm2}-{XS,S,M,L}`. Seed 0 is the repo default;
+seeds 1–2 live in `seed1/`, `seed2/` subfolders. Optimizer state is not shipped.
+
+```python
+from huggingface_hub import snapshot_download
+from nanoprot.training.checkpoint import load_pretrained
+local = snapshot_download("yagizdevre/nanoprot-gpt2-L")
+model, cfg, meta, tok = load_pretrained(local, device="cpu", return_tokenizer=True)
+```
+
 ## Final metrics (mean ± std over 3 seeds)
 
 | arch | scale | params | residues | metric |
