@@ -159,7 +159,7 @@ def _mean_std(xs: List[float]) -> Tuple[Optional[float], Optional[float]]:
 
 def build_card(meta: Dict[str, Any], sibling_metas: List[Dict[str, Any]], *,
                provenance: Optional[Dict[str, Any]] = None,
-               hf_org: str = "ygzdvr") -> str:
+               hf_org: str = "yagizdevre") -> str:
     cfg = meta.get("config", {})
     model = cfg.get("model", meta.get("model_config", {}))
     train = cfg.get("training", meta.get("training_config", {}))
@@ -364,7 +364,7 @@ Hub: `{hf_org}/{base}` (seed 0 is the default; siblings on branches `seed1`,
 {sibling_links}
 
 The full suite spans `{{gpt2, esm2, mamba}} x {{XS, S, M, L}} x {{seed 0,1,2}}`.
-See the [nanoprot repository](https://github.com/{hf_org}/nanoprot) for the
+See the [nanoprot repository](https://github.com/ygzdvr/nanoprot) for the
 complete grid and the scaling-curve comparisons.
 
 ## Citation
@@ -396,7 +396,7 @@ python -m scripts.train --config config.yaml
 # ---------------------------------------------------------------------------
 
 def make_for_dir(ckpt_dir: Path, *, out: Optional[Path], siblings: bool,
-                 write_config: bool, hf_org: str = "ygzdvr") -> Optional[Path]:
+                 write_config: bool, hf_org: str = "yagizdevre") -> Optional[Path]:
     meta = _final_meta(ckpt_dir)
     if meta is None:
         print(f"  [skip] no meta_*.json in {ckpt_dir}", file=sys.stderr)
@@ -448,8 +448,8 @@ def main() -> int:
     ap.add_argument("--no-siblings", action="store_true", help="Do not aggregate seeds.")
     ap.add_argument("--no-write-config", action="store_true",
                     help="Do not write config.yaml next to the checkpoint.")
-    ap.add_argument("--hf-org", type=str, default="ygzdvr",
-                    help="HuggingFace namespace for the model repos (default: ygzdvr).")
+    ap.add_argument("--hf-org", type=str, default="yagizdevre",
+                    help="HuggingFace namespace for the model repos (default: yagizdevre).")
     args = ap.parse_args()
 
     siblings = not args.no_siblings

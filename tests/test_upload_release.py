@@ -24,10 +24,10 @@ def _cell(root: Path, arch: str, scale: str, seed: int, step: int = 5, done: boo
 
 def test_plan_excludes_optimizer_state(tmp_path: Path) -> None:
     _cell(tmp_path, "esm2", "S", 0)
-    repos = plan(tmp_path, "ygzdvr", only=None)
+    repos = plan(tmp_path, "yagizdevre", only=None)
     assert len(repos) == 1
     repo, files = repos[0]
-    assert repo == "ygzdvr/nanoprot-esm2-S"
+    assert repo == "yagizdevre/nanoprot-esm2-S"
     repo_paths = [p for _, p in files]
     assert not any("optim_" in p for p in repo_paths), "optimizer state must not be uploaded"
     assert "README.md" in repo_paths and "config.yaml" in repo_paths
@@ -37,7 +37,7 @@ def test_plan_excludes_optimizer_state(tmp_path: Path) -> None:
 def test_plan_seed_layout(tmp_path: Path) -> None:
     for s in (0, 1, 2):
         _cell(tmp_path, "esm2", "L", s)
-    (repo, files) = plan(tmp_path, "ygzdvr", only=None)[0]
+    (repo, files) = plan(tmp_path, "yagizdevre", only=None)[0]
     paths = [p for _, p in files]
     # seed 0 at root, seeds 1/2 under seedN/
     assert any(p == "model_000005.pt" for p in paths)         # headline at root
@@ -49,4 +49,4 @@ def test_plan_seed_layout(tmp_path: Path) -> None:
 
 def test_plan_skips_partial_cells(tmp_path: Path) -> None:
     _cell(tmp_path, "gpt2", "M", 0, done=False)  # not finished
-    assert plan(tmp_path, "ygzdvr", only=None) == []
+    assert plan(tmp_path, "yagizdevre", only=None) == []

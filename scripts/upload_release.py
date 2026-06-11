@@ -17,7 +17,7 @@ HF_TOKEN) and write access to the org.
 
 Usage:
   python -m scripts.upload_release --release-root $NANOPROT_BASE_DIR/release   # dry-run
-  python -m scripts.upload_release --release-root DIR --hf-org ygzdvr --push   # real
+  python -m scripts.upload_release --release-root DIR --hf-org yagizdevre --push   # real
   python -m scripts.upload_release --release-root DIR --only esm2-L --push
 """
 
@@ -98,7 +98,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--release-root", type=Path, required=True)
-    ap.add_argument("--hf-org", type=str, default="ygzdvr")
+    ap.add_argument("--hf-org", type=str, default="yagizdevre")
     ap.add_argument("--only", type=str, default=None, help="Just one base, e.g. esm2-L.")
     ap.add_argument("--private", action="store_true", help="Create private repos.")
     ap.add_argument("--push", action="store_true",
