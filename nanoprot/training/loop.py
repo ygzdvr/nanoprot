@@ -195,10 +195,12 @@ def train(
     print0(f"Run: {cfg.name}   |   arch={cfg.model.arch}  objective={cfg.training.objective}  "
            f"tokenizer={cfg.tokenizer.name}")
     print0(f"Device: {device_type}   |   world size: {world_size}")
+    peak_flops: Optional[float] = None  # per-GPU bf16 peak, for MFU; None if unknown
     if device_type == "cuda":
         gpu_name = torch.cuda.get_device_name(0)
         try:
-            print0(f"GPU: {gpu_name} | Peak FLOPS (BF16): {get_peak_flops(gpu_name):.2e}")
+            peak_flops = get_peak_flops(gpu_name)
+            print0(f"GPU: {gpu_name} | Peak FLOPS (BF16): {peak_flops:.2e}")
         except Exception:
             print0(f"GPU: {gpu_name}")
     print0(f"COMPUTE_DTYPE: {COMPUTE_DTYPE} ({COMPUTE_DTYPE_REASON})")
@@ -307,6 +309,11 @@ def train(
     model.train()
     for step in range(num_iterations):
         state.step = step
+        log_this = step % cfg.logging.log_every == 0
+        # Compute the richer diagnostics (grad norm, MFU, train accuracy, GPU mem)
+        # only when we will actually record them — every step under full logging,
+        # otherwise just on log steps — so the default path stays cheap.
+        want_metrics = master and (write_history or log_this)
 
         # LR schedule
         mult = lr_multiplier(
@@ -328,6 +335,16 @@ def train(
             (loss / grad_accum_steps).backward()
             loss_accum += float(loss.detach())
         loss_accum /= grad_accum_steps
+
+        # Global gradient norm (rank-0 local) — measured, NOT clipped: with
+        # max_norm=inf the scale factor clamps to 1.0, so grads are untouched
+        # while clip_grad_norm_ still returns the total norm.
+        grad_norm = None
+        if want_metrics:
+            grad_norm = float(
+                torch.nn.utils.clip_grad_norm_(model.parameters(), float("inf"))
+            )
+
         optimizer.step()
 
         # Smoothed loss (EMA)
@@ -342,30 +359,68 @@ def train(
         cum_tokens += cfg.training.total_batch_size
         step_tok_per_sec = cfg.training.total_batch_size / max(dt_step, 1e-6)
 
+        # Richer per-step diagnostics — only computed when they will be recorded
+        # (see want_metrics), so the default path pays nothing extra.
+        cur_lr = train_bpr = train_ppl = train_acc = None
+        mfu = achieved_tflops = gpu_mem_gb = None
+        if want_metrics:
+            cur_lr = mult * max(g["initial_lr"] for g in optimizer.param_groups)
+            train_bpr = loss_accum / math.log(2)
+            train_ppl = math.exp(min(loss_accum, 20.0))  # cap: avoid overflow at init
+            achieved_tflops = flops_per_token * step_tok_per_sec / 1e12
+            if peak_flops:
+                mfu = flops_per_token * step_tok_per_sec / (world_size * peak_flops)
+            if device_type == "cuda":
+                gpu_mem_gb = torch.cuda.max_memory_allocated() / 1e9
+            if cfg.eval.compute_accuracy:
+                with torch.no_grad():
+                    m = targets != -100
+                    if bool(m.any()):
+                        preds = model(idx).argmax(dim=-1)
+                        train_acc = float((preds[m] == targets[m]).float().mean())
+
         # Full per-step training history (off by default).
         if write_history:
             history.append({
                 "type": "train", "step": step, "loss": loss_accum,
-                "smooth_loss": state.smooth_loss, "lr_mult": mult,
+                "smooth_loss": state.smooth_loss, "train_bpr": train_bpr,
+                "train_ppl": train_ppl, "train_accuracy": train_acc,
+                "lr_mult": mult, "lr": cur_lr, "grad_norm": grad_norm,
                 "dt_sec": dt_step, "tok_per_sec": step_tok_per_sec,
+                "mfu": mfu, "achieved_tflops": achieved_tflops,
+                "gpu_mem_gb": gpu_mem_gb,
                 "tokens": cum_tokens, "wall_sec": now - t_start,
             })
 
-        if step % cfg.logging.log_every == 0 and master:
+        if log_this and master:
             dt = time.time() - t_start
             tok_per_sec = (step + 1) * cfg.training.total_batch_size / max(dt, 1e-6)
+            extra = ""
+            if grad_norm is not None:
+                extra += f" | grad_norm {grad_norm:.3f}"
+            if mfu is not None:
+                extra += f" | mfu {mfu * 100:.1f}%"
+            if train_acc is not None:
+                extra += f" | train_acc {train_acc:.4f}"
             print0(
                 f"step {step:6d}/{num_iterations} | loss {loss_accum:.4f} "
                 f"| smooth {state.smooth_loss:.4f} | lr_mult {mult:.3f} "
-                f"| tok/s {tok_per_sec:.2e}"
+                f"| tok/s {tok_per_sec:.2e}" + extra
             )
             wandb_run.log(
                 {
                     "step": step,
                     "loss": loss_accum,
                     "smooth_loss": state.smooth_loss,
+                    "train_bpr": train_bpr,
+                    "train_ppl": train_ppl,
+                    "train_accuracy": train_acc,
                     "lr_mult": mult,
+                    "lr": cur_lr,
+                    "grad_norm": grad_norm,
                     "tok_per_sec": tok_per_sec,
+                    "mfu": mfu,
+                    "gpu_mem_gb": gpu_mem_gb,
                 }
             )
 
@@ -417,11 +472,15 @@ def train(
             and step % cfg.checkpointing.save_every == 0
         ) or (step in set(cfg.checkpointing.save_steps))
         if save_now:
+            # Intermediate (trajectory) checkpoints are model-only: the optimizer
+            # state is large and only needed to resume, which the sweep never does
+            # (it restarts incomplete runs from scratch). The final save below keeps
+            # the optimizer.
             _save(
                 cfg, step, model, optimizer, state, rank, num_iterations,
                 n_params=n_params, flops_per_token=flops_per_token,
                 total_residues=total_residues, world_size=world_size,
-                train_time_sec=time.time() - t_start,
+                train_time_sec=time.time() - t_start, save_optimizer=False,
             )
             if write_history:
                 _write_history(history_path, history)
@@ -494,6 +553,7 @@ def _save(
     total_residues: Optional[int] = None,
     world_size: Optional[int] = None,
     train_time_sec: Optional[float] = None,
+    save_optimizer: bool = True,
 ) -> None:
     """Save model + optimizer + meta in the format ``checkpoint.save_checkpoint`` expects.
 
@@ -502,6 +562,9 @@ def _save(
     count, FLOPs/token, residues seen, wall-clock, world size) that downstream
     tooling — the model-card generator in particular — reports without having to
     re-instantiate the model.
+
+    With ``save_optimizer=False`` the (large) optimizer shards are skipped — used
+    for intermediate trajectory checkpoints, which only need the model weights.
     """
     try:
         from nanoprot import __version__ as _nanoprot_version
@@ -535,12 +598,13 @@ def _save(
         "config": cfg.model_dump(),
         "name": cfg.name,
         "version": _nanoprot_version,
+        "has_optimizer": save_optimizer,
     }
     save_checkpoint(
         cfg.checkpointing.output_dir,
         step,
         model.state_dict(),
-        optimizer.state_dict(),
+        optimizer.state_dict() if save_optimizer else None,
         meta,
         rank=rank,
     )

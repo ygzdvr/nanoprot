@@ -31,3 +31,24 @@ def test_name_encodes_ratio() -> None:
     cfg = _sweep_config("mamba", "S", 24, seed=1)
     assert cfg["name"] == "nanoprot-sweep-mamba-S-r24-s1"
     assert "sweep/nanoprot-sweep-mamba-S-r24-s1" in cfg["checkpointing"]["output_dir"]
+
+
+def test_full_logging_on_by_default() -> None:
+    cfg = _sweep_config("gpt2", "S", 12, seed=0)
+    assert cfg["logging"]["history"] is True
+    assert cfg["logging"]["log_every"] == 1        # log every step
+    assert cfg["eval"]["eval_every"] == 10         # validate every 10 steps
+    assert cfg["eval"]["compute_accuracy"] is True
+
+
+def test_intermediate_checkpoint_interval() -> None:
+    # Default: ~ckpts_per_run evenly-spaced intermediate checkpoints.
+    cfg = _sweep_config("gpt2", "S", 96, seed=0, ckpts_per_run=10)
+    se = cfg["checkpointing"]["save_every"]
+    assert se >= 1
+    from scripts.gen_sweep_configs import _sweep_steps
+    steps = _sweep_steps(cfg, 96)
+    assert steps // se in (9, 10, 11)              # ~10 intermediate checkpoints
+    # Explicit --save-every overrides the per-run count.
+    cfg2 = _sweep_config("gpt2", "S", 96, seed=0, save_every=50)
+    assert cfg2["checkpointing"]["save_every"] == 50

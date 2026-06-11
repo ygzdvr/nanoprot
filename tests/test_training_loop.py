@@ -233,13 +233,46 @@ class TestTrainLoopEndToEnd:
 
         n_iter = cfg.total_residues() // cfg.training.total_batch_size
         assert len(train_rows) == n_iter                      # one per step
-        for r in train_rows:                                  # compute-time fields present
-            assert {"loss", "lr_mult", "dt_sec", "tok_per_sec", "tokens", "wall_sec"} <= r.keys()
+        for r in train_rows:                                  # full diagnostic set present
+            assert {"loss", "smooth_loss", "train_bpr", "train_ppl", "train_accuracy",
+                    "lr_mult", "lr", "grad_norm", "dt_sec", "tok_per_sec", "mfu",
+                    "achieved_tflops", "gpu_mem_gb", "tokens", "wall_sec"} <= r.keys()
+            assert r["grad_norm"] is not None and r["grad_norm"] >= 0.0   # measured
+            assert r["train_bpr"] == pytest.approx(r["loss"] / math.log(2))
+            assert r["train_ppl"] > 1.0
+            assert 0.0 <= r["train_accuracy"] <= 1.0           # compute_accuracy=True
+            assert r["lr"] is not None and r["lr"] > 0.0
+            assert r["achieved_tflops"] is not None and r["achieved_tflops"] >= 0.0
+            assert r["mfu"] is None                            # no peak-FLOPS table on CPU
+            assert r["gpu_mem_gb"] is None                     # CPU has no CUDA mem
         assert train_rows[-1]["tokens"] == n_iter * cfg.training.total_batch_size
         assert len(eval_rows) >= 1
         assert eval_rows[0]["val_accuracy"] is not None       # accuracy computed
         assert 0.0 <= eval_rows[0]["val_accuracy"] <= 1.0
         assert eval_rows[0]["val_ppl"] > 1.0                  # perplexity = exp(loss)
+
+    def test_intermediate_checkpoints_are_model_only(self, tmp_path: Path) -> None:
+        """``save_every`` writes intermediate checkpoints throughout training; they
+        are MODEL-ONLY (no optimizer shards — the weight trajectory without the bulky
+        optimizer state), while the final checkpoint keeps the optimizer for resume."""
+        import json
+
+        cfg = _tiny_config(tmp_path)
+        cfg.checkpointing.save_every = 1     # save at steps 1, 2 (intermediate)
+        train_loader = _synthetic_loader(cfg.model.vocab_size,
+                                         cfg.training.device_batch_size, cfg.model.max_seq_len)
+        train(cfg, device_type="cpu", train_loader=train_loader)
+
+        ckpt = Path(cfg.checkpointing.output_dir)
+        n_iter = cfg.total_residues() // cfg.training.total_batch_size  # = 3
+        # an intermediate step: model + meta present, NO optimizer shard
+        assert (ckpt / "model_000001.pt").exists()
+        assert not list(ckpt.glob("optim_000001_*.pt"))
+        assert json.loads((ckpt / "meta_000001.json").read_text())["has_optimizer"] is False
+        # final step: model + meta + optimizer all present
+        assert (ckpt / f"model_{n_iter:06d}.pt").exists()
+        assert list(ckpt.glob(f"optim_{n_iter:06d}_*.pt"))    # optimizer kept at the end
+        assert json.loads((ckpt / f"meta_{n_iter:06d}.json").read_text())["has_optimizer"] is True
 
     def test_train_works_for_esm2_mlm_objective(self, tmp_path: Path) -> None:
         """Same end-to-end loop, but with arch=esm2 and objective=mlm."""

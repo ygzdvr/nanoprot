@@ -1,6 +1,10 @@
-# Example: FULL per-step logging + fine validation. The four flags that
-# turn it on are logging.history/log_every and eval.eval_every/compute_accuracy.
-# Produces history.jsonl -> visualise with: python -m scripts.plot_training_run
+# Example: FULL per-step logging + fine validation + intermediate checkpoints.
+# Flags: logging.history/log_every, eval.eval_every/compute_accuracy, and
+# checkpointing.save_every (intermediate checkpoints are MODEL-ONLY — no optimizer).
+# history.jsonl records, PER STEP: loss, smooth_loss, train_bpr, train_ppl,
+# train_accuracy, lr, lr_mult, grad_norm, tok_per_sec, mfu, achieved_tflops,
+# gpu_mem_gb, tokens, wall_sec; and per eval pass: val_loss/bpr/ppl/accuracy.
+# Visualise the 6-panel dashboard with: python -m scripts.plot_training_run
 
 name: example-full-logging
 seed: 0
@@ -54,5 +58,5 @@ logging:
   log_every: 1
 checkpointing:
   output_dir: ${NANOPROT_BASE_DIR}/runs/example-full-logging
-  save_every: -1
+  save_every: 100          # model-only checkpoint every 100 steps (+ full at the end)
   save_steps: []

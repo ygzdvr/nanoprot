@@ -103,10 +103,17 @@ def main() -> int:
         "legend.fontsize": 6.5, "axes.spines.top": False, "axes.spines.right": False,
         "axes.linewidth": 0.8, "figure.dpi": 150,
     })
-    fig, axes = plt.subplots(2, 2, figsize=(7.2, 5.0), constrained_layout=True)
-    (axa, axb), (axc, axd) = axes
+    fig, axes = plt.subplots(3, 2, figsize=(7.2, 7.6), constrained_layout=True)
+    (axa, axb), (axc, axd), (axe, axf) = axes
     title = cell or (args.history.parent.name if args.history else "training run")
     fig.suptitle(title, fontsize=9)
+
+    def _lab(ax, letter):
+        ax.text(-0.16, 1.04, letter, transform=ax.transAxes, fontsize=10, fontweight="bold")
+
+    def _missing(ax, what):
+        ax.text(0.5, 0.5, f"{what}\n(needs logging.history run)", transform=ax.transAxes,
+                ha="center", va="center", color="0.6", fontsize=7)
 
     # (a) loss vs step
     if train:
@@ -117,34 +124,42 @@ def main() -> int:
         axa.plot([r["step"] for r in ev], [r["val_loss"] for r in ev], color=_GREEN,
                  marker="o", ms=3, lw=1.0, label="val loss")
     axa.set_xlabel("step"); axa.set_ylabel("loss (nats)"); axa.set_title("loss")
-    axa.text(-0.16, 1.04, "a", transform=axa.transAxes, fontsize=10, fontweight="bold")
-    axa.legend(frameon=False)
+    _lab(axa, "a"); axa.legend(frameon=False)
 
-    # (b) perplexity + accuracy (full-logging only)
+    # (b) perplexity + accuracy (train + val)
     have_ppl = any(r.get("val_ppl") for r in ev)
-    have_acc = any(r.get("val_accuracy") is not None for r in ev)
+    have_vacc = any(r.get("val_accuracy") is not None for r in ev)
+    have_tacc = any(r.get("train_accuracy") is not None for r in train)
     if have_ppl:
         axb.plot([r["step"] for r in ev if r.get("val_ppl")],
                  [r["val_ppl"] for r in ev if r.get("val_ppl")], color=_GREEN, marker="o", ms=3)
         axb.set_ylabel("val perplexity", color=_GREEN)
-    if have_acc:
+    if have_vacc or have_tacc:
         ax2 = axb.twinx(); ax2.spines.top.set_visible(False)
-        ax2.plot([r["step"] for r in ev if r.get("val_accuracy") is not None],
-                 [r["val_accuracy"] for r in ev if r.get("val_accuracy") is not None],
-                 color=_BLUE, marker="s", ms=3)
-        ax2.set_ylabel("val accuracy", color=_BLUE)
-    if not (have_ppl or have_acc):
-        axb.text(0.5, 0.5, "perplexity / accuracy\n(needs logging.history run)",
-                 transform=axb.transAxes, ha="center", va="center", color="0.6", fontsize=7)
-    axb.set_xlabel("step"); axb.set_title("perplexity & accuracy")
-    axb.text(-0.16, 1.04, "b", transform=axb.transAxes, fontsize=10, fontweight="bold")
+        if have_tacc:
+            ax2.plot([r["step"] for r in train if r.get("train_accuracy") is not None],
+                     [r["train_accuracy"] for r in train if r.get("train_accuracy") is not None],
+                     color=_GREY, lw=0.8, alpha=0.7, label="train")
+        if have_vacc:
+            ax2.plot([r["step"] for r in ev if r.get("val_accuracy") is not None],
+                     [r["val_accuracy"] for r in ev if r.get("val_accuracy") is not None],
+                     color=_BLUE, marker="s", ms=3, label="val")
+        ax2.set_ylabel("accuracy", color=_BLUE); ax2.legend(frameon=False, fontsize=6)
+    if not (have_ppl or have_vacc or have_tacc):
+        _missing(axb, "perplexity / accuracy")
+    axb.set_xlabel("step"); axb.set_title("perplexity & accuracy"); _lab(axb, "b")
 
-    # (c) throughput
+    # (c) throughput + MFU
     if train:
-        axc.plot([r["step"] for r in train], [r["tok_per_sec"] for r in train],
-                 color=_BLUE, lw=1.0)
-    axc.set_xlabel("step"); axc.set_ylabel("residues / sec"); axc.set_title("throughput")
-    axc.text(-0.16, 1.04, "c", transform=axc.transAxes, fontsize=10, fontweight="bold")
+        axc.plot([r["step"] for r in train], [r["tok_per_sec"] for r in train], color=_BLUE, lw=1.0)
+        mfu = [r for r in train if r.get("mfu") is not None]
+        if mfu:
+            ax2 = axc.twinx(); ax2.spines.top.set_visible(False)
+            ax2.plot([r["step"] for r in mfu], [r["mfu"] * 100 for r in mfu],
+                     color=_GREEN, lw=0.9, alpha=0.8)
+            ax2.set_ylabel("MFU (%)", color=_GREEN)
+    axc.set_xlabel("step"); axc.set_ylabel("residues / sec", color=_BLUE)
+    axc.set_title("throughput & MFU"); _lab(axc, "c")
 
     # (d) loss vs compute (FLOPs = tokens * flops_per_token)
     if fpt and train:
@@ -156,10 +171,26 @@ def main() -> int:
         axd.set_xscale("log"); axd.set_xlabel("training FLOPs"); axd.set_ylabel("loss (nats)")
         axd.legend(frameon=False)
     else:
-        axd.text(0.5, 0.5, "loss vs FLOPs\n(needs flops_per_token from meta)",
-                 transform=axd.transAxes, ha="center", va="center", color="0.6", fontsize=7)
-    axd.set_title("compute efficiency")
-    axd.text(-0.16, 1.04, "d", transform=axd.transAxes, fontsize=10, fontweight="bold")
+        _missing(axd, "loss vs FLOPs")
+    axd.set_title("compute efficiency"); _lab(axd, "d")
+
+    # (e) gradient norm vs step
+    gn = [r for r in train if r.get("grad_norm") is not None]
+    if gn:
+        axe.plot([r["step"] for r in gn], [r["grad_norm"] for r in gn], color=_BLUE, lw=0.8)
+        axe.set_ylabel("grad norm")
+    else:
+        _missing(axe, "gradient norm")
+    axe.set_xlabel("step"); axe.set_title("gradient norm"); _lab(axe, "e")
+
+    # (f) learning rate vs step
+    lr = [r for r in train if r.get("lr") is not None]
+    if lr:
+        axf.plot([r["step"] for r in lr], [r["lr"] for r in lr], color=_BLUE, lw=1.0)
+        axf.set_ylabel("learning rate")
+    else:
+        _missing(axf, "learning rate")
+    axf.set_xlabel("step"); axf.set_title("learning rate"); _lab(axf, "f")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(args.out.with_suffix(".png"), bbox_inches="tight")
