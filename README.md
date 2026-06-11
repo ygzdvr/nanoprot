@@ -8,17 +8,18 @@ protein language models: clean training code, multiple architectures, dense
 checkpoint sweeps, and pretrained model releases small enough that a single
 research group can re-train them.
 
-> Status: **v0.5.0 — the model suite is training.** GPT-2-style autoregressive
-> decoders, ESM-2-style masked-LM encoders, AND Mamba selective-SSM language
-> models, all driven from a single YAML config (`arch: gpt2|esm2|mamba`). The
-> full **model-release pipeline** is built and running on UniRef50 (release
-> `2026_01`): corpus prep, a config generator for the 3-arch × 4-scale × 3-seed
-> grid, a resumable Slurm training array, self-describing checkpoints, an
-> arch-aware loader (`load_pretrained`), results aggregation + scaling-curve
-> figures, auto-generated HuggingFace model cards, and a safe-by-default upload
-> script. The esm2 column has finished with a clean scaling curve (masked-CE
-> 3.748 → 3.307 from XS→L); gpt2 + mamba are training. 117 unit + integration
-> tests. See `docs/v0.5_release_scope.md` and the [roadmap](#roadmap).
+> Status: **v0.5.0 — the model suite is trained (36/36).** GPT-2-style
+> autoregressive decoders, ESM-2-style masked-LM encoders, AND Mamba selective-SSM
+> language models, all driven from a single YAML config (`arch: gpt2|esm2|mamba`).
+> The full **model-release pipeline** ran end to end on UniRef50 (release
+> `2026_01`): corpus prep, the 3-arch × 4-scale × 3-seed grid, a resumable Slurm
+> training array, self-describing checkpoints, an arch-aware loader
+> (`load_pretrained`), results aggregation + scaling-curve fits, auto-generated
+> HuggingFace model cards, and a safe-by-default upload script. **Headline result
+> ([RESULTS.md](RESULTS.md)): transformers (gpt2, α=0.031) out-scale Mamba SSMs
+> (α=0.023) on UniRef50 next-residue prediction at every scale, gap widening.**
+> 117 unit + integration tests. See `docs/v0.5_release_scope.md` and the
+> [roadmap](#roadmap).
 
 ---
 
@@ -183,7 +184,7 @@ that is printed once the model is instantiated in v0.2.)
 | **v0.3** | shipped | Discriminated-union `ModelConfig` (gpt2 \| esm2), ESM-2 encoder model + 33-token ESM-2 tokenizer, BERT-style MLM data loader (15% / 80/10/10), `training.objective` (ar \| mlm) loop dispatch, eval loop integration (val_bpr + best_val_bpr), bidirectional-attention SDPA path, 80 tests total, ESM-2 8M + 650M config presets |
 | **v0.4** | shipped | Mamba selective-SSM model (third arch in the discriminated union); depthwise causal conv + selective scan + gating + Pre-RMSNorm; pure-PyTorch reference scan (works on CPU/GPU/MPS); causal-by-construction so AR training pipeline reuses; new `MambaModelConfig` with `d_state`, `d_conv`, `expand`, auto-derived `dt_rank`; 14 Mamba tests including causality + scan correctness; `mamba_small_uniref50.yaml` config preset |
 | **v0.4.1** | **shipped** | Audit patches: (C1) `selective_scan_ref` now upcasts to fp32 internally to prevent recurrent bf16 drift, matching the official Mamba reference; (M2) safer zero defaults on `A_log`/`D` so direct construction without `init_weights()` is mathematically valid; (L1) `dt_init` scratch tensors allocated on the parameter's own device; (L2) per-arch `estimate_params` with a dedicated Mamba branch (the v0.4.0 formula over-counted Mamba by ~35%; now accurate to within 1%); (M1) fixed three `test_param_count_scales_with_depth` tests that were silently passing without actually re-deriving `d_model`; 4 new defensive tests (scan dtype preservation, bf16-vs-fp32 agreement, safe defaults, estimate-vs-actual). 98 tests total. |
-| **v0.5** | **training** | Model-release pipeline, end to end and running on real UniRef50 (`2026_01`): corpus prep (`prepare_uniref50.py`), 36-config grid (`gen_release_configs.py`, unified 33-token tokenizer), resumable `train_release.slurm` array, fused Mamba CUDA scan (`install_mamba_ssm.sh`, ~100× over the reference), self-describing checkpoints, arch-aware `load_pretrained`, results aggregation + scaling-curve figures, `make_model_card.py` (mean±std cards), safe-by-default `upload_release.py`. esm2 column finished (clean scaling curve); gpt2 + mamba training. See `docs/v0.5_release_scope.md` |
+| **v0.5** | **trained (36/36)** | Model-release pipeline, ran end to end on real UniRef50 (`2026_01`): corpus prep (`prepare_uniref50.py`), 36-config grid (`gen_release_configs.py`, unified 33-token tokenizer), resumable `train_release.slurm` array, fused Mamba CUDA scan (`install_mamba_ssm.sh`, ~100× over the reference), self-describing checkpoints, arch-aware `load_pretrained`, results aggregation + scaling-law fits, `make_model_card.py` (mean±std cards), safe-by-default `upload_release.py`. **All 36 cells trained, zero failures.** Result + figures in [`RESULTS.md`](RESULTS.md). Remaining: `upload_release --push` to the Hub. See `docs/v0.5_release_scope.md` |
 | **v0.6** | next | Cross-architecture benchmark suite (probing + downstream) |
 | **v1.0** | when stable | Paper-ready release for MLSB / similar venue |
 
