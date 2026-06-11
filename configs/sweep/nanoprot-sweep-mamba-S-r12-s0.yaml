@@ -1,4 +1,5 @@
-# AUTO-GENERATED data-budget sweep (mamba S, ratio=12 -> D=0.42B residues).
+# AUTO-GENERATED data-budget sweep (mamba S, ratio=12 -> D=0.42B residues, 792 steps).
+# Intermediate model-only checkpoints every 79 steps (~10) + final.
 # For L(N,D) scaling. Regenerate: python -m scripts.gen_sweep_configs
 
 name: nanoprot-sweep-mamba-S-r12-s0
@@ -53,5 +54,5 @@ logging:
   log_every: 1
 checkpointing:
   output_dir: ${NANOPROT_BASE_DIR}/sweep/nanoprot-sweep-mamba-S-r12-s0
-  save_every: -1
+  save_every: 79
   save_steps: []

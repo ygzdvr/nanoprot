@@ -1,4 +1,5 @@
-# AUTO-GENERATED data-budget sweep (gpt2 S, ratio=3 -> D=0.11B residues).
+# AUTO-GENERATED data-budget sweep (gpt2 S, ratio=3 -> D=0.11B residues, 205 steps).
+# Intermediate model-only checkpoints every 20 steps (~10) + final.
 # For L(N,D) scaling. Regenerate: python -m scripts.gen_sweep_configs
 
 name: nanoprot-sweep-gpt2-S-r3-s0
@@ -53,5 +54,5 @@ logging:
   log_every: 1
 checkpointing:
   output_dir: ${NANOPROT_BASE_DIR}/sweep/nanoprot-sweep-gpt2-S-r3-s0
-  save_every: -1
+  save_every: 20
   save_steps: []
