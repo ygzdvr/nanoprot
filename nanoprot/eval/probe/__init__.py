@@ -33,3 +33,8 @@ from nanoprot.eval.probe.labels import (  # noqa: F401
     load_probe_dataset,
     tokenize_and_align,
 )
+from nanoprot.eval.probe.run import (  # noqa: F401
+    build_random_init,
+    gather_features,
+    run_probe,
+)
