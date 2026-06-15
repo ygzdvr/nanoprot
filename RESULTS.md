@@ -71,6 +71,28 @@ better than the selective-SSM one. (See `docs/figures/scaling_laws.png`.)
 > the isolated parameter-exponent of a full L(N, D) surface. The data-budget sweep
 > (`scripts/gen_sweep_configs.py`) is scaffolded to decouple them.
 
+## Statistical robustness
+
+The gpt2 > mamba result is not a point-estimate artifact. Using the per-seed
+checkpoints (3 seeds × 4 scales), a **stratified seed bootstrap** (4000 resamples,
+seeds resampled within each scale) puts 95% CIs on the log-log exponent
+`α = −d(log L)/d(log N)` — and the AR architectures separate cleanly:
+
+| arch | α | 95% CI |
+|---|---:|---:|
+| **gpt2** (bpr) | 0.0309 | **[0.0307, 0.0312]** |
+| mamba (bpr) | 0.0228 | **[0.0228, 0.0229]** |
+| esm2 (mCE, separate) | 0.0278 | [0.0277, 0.0280] |
+
+The gpt2 and mamba intervals are **non-overlapping**; the exponent gap is
+Δα = +0.0081 [95% CI +0.0078, +0.0084], **P(gpt2 steeper) = 1.000**. The per-scale
+loss gap (mamba − gpt2) is significantly positive at *every* scale (all CIs exclude
+0, P = 1.000) — small at XS/S (+0.020–0.030 bpr) and much larger at M/L (+0.10–0.11),
+so the honest statement is **"significantly worse everywhere, and far worse at
+scale,"** not strictly monotonic widening. The win also holds at matched **compute**,
+not just matched parameters: gpt2's iso-FLOP frontier lies below mamba's across the
+whole FLOP range. (`scripts/scaling_rigor.py`; see `docs/figures/scaling_rigor.png`.)
+
 ## A methodological note worth keeping
 
 A 120-step, sub-sampled **calibration** run suggested the *opposite* — mamba
