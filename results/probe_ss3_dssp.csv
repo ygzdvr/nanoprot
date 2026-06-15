@@ -1,0 +1,13 @@
+arch,scale,seed,n_params,concept,source,metric,best_layer,n_layers,learned_test,baseline_test,learned_minus_baseline
+gpt2,XS,0,10739966,ss3,dssp,macro_f1,6,7,0.508386,0.364332,0.144054
+mamba,XS,0,9186688,ss3,dssp,macro_f1,6,8,0.538995,0.386364,0.152631
+esm2,XS,0,7422080,ss3,dssp,macro_f1,6,7,0.453018,0.408151,0.044867
+gpt2,S,0,36090440,ss3,dssp,macro_f1,8,10,0.579395,0.362317,0.217078
+mamba,S,0,35024000,ss3,dssp,macro_f1,10,12,0.585876,0.432596,0.15328
+esm2,S,0,33263040,ss3,dssp,macro_f1,11,13,0.64078,0.405762,0.235019
+gpt2,M,0,135390414,ss3,dssp,macro_f1,13,15,0.643672,0.420889,0.222783
+mamba,M,0,151749504,ss3,dssp,macro_f1,17,19,0.6308,0.445609,0.185191
+esm2,M,0,147616000,ss3,dssp,macro_f1,27,31,0.71762,0.414934,0.302686
+gpt2,L,0,599354680,ss3,dssp,macro_f1,22,24,0.670125,0.391863,0.278263
+mamba,L,0,630572288,ss3,dssp,macro_f1,25,30,0.667792,0.430613,0.237179
+esm2,L,0,649141760,ss3,dssp,macro_f1,28,34,0.752803,0.430316,0.322487

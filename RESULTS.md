@@ -119,9 +119,23 @@ on a random-init model of the identical architecture. Seed 0, all four scales:
    encoder-vs-decoder caveat. Structure is most decodable in the **late layers**,
    deepening with scale (L best layer: gpt2 21/24, mamba 27/30, esm2 32/34).
 
-> Caveat: **seed 0 only** (no error bars yet) and one of three planned label sources
-> (NetSurfP/CB513); the Swiss-Prot + DSSP-from-AlphaFold triangulation and 3-seed error
-> bars are next. (`scripts/run_probes.py`, `scripts/plot_probes.py`; `docs/figures/probes.png`.)
+### Triangulation across three label sources
+
+The probe is run against **three independent SS3 label sources** — NetSurfP-2.0/CB513
+(DSSP on *experimental* structure), Swiss-Prot HELIX/STRAND annotations, and
+DSSP-from-AlphaFold (biotite P-SEA on *predicted* structure) — which have markedly
+different SS3 distributions (helix/strand/coil = 35/22/43, 26/15/60, 39/15/45) and
+protein sets. **The AR head-to-head replicates:** gpt2 > mamba (learned − baseline) at
+**11 of 12** source×scale cells, and at **S, M, L on all three sources** (the lone
+exception is XS on DSSP, a near-tie 0.144 vs 0.153). The finding is therefore robust to
+dataset *and* to experimental-vs-predicted structure, not an artifact of one benchmark.
+A per-residue **label-agreement check** (`scripts/probe_agreement.py`) puts Swiss-Prot
+vs AF concordance at 68% over 515k residues — the disagreement traced to Swiss-Prot's
+"else→coil" convention (36% of its "coil" is AF helix/strand), i.e. an honest source
+difference, not noise. (`docs/figures/probes_triangulation.png`.)
+
+> Caveat: **seed 0 only** (no error bars yet). The 3-seed error bars are the remaining
+> step. (`scripts/run_probes.py`, `scripts/plot_probes.py`, `scripts/probe_agreement.py`.)
 
 ## A methodological note worth keeping
 
