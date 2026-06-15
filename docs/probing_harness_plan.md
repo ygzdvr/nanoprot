@@ -92,18 +92,37 @@ checkpoints as-is** (load with `load_pretrained`, register hooks, run forward).
 - Run in eval / bf16-or-fp32 per device; batch proteins by length; cache activations
   to disk only if needed (prefer streaming: extract → probe-fit incrementally → free).
 
-## 6. Data pipeline (self-contained)
+## 6. Data pipeline — three SS3 label sources, triangulated (decided 2026-06-15)
 
-nanoprot is a standalone public repo, so it ships its own probe-data prep (the thesis
-pickles are gone and live in the other repo anyway):
+SS3 labels come from **all three sources**, and we **check whether the cross-arch
+conclusion is consistent across them** (robustness) and, where proteins overlap,
+whether the *labels themselves* agree (validation). nanoprot ships its own prep (it is
+a standalone public repo; the thesis pickles are gone and live elsewhere):
 
-- `scripts/prepare_probe_data.py` — download a Swiss-Prot release (pinned, provenance
-  recorded like `prepare_uniref50.py` does), parse XML → per-residue + per-protein
-  labels, filter to high-quality annotated proteins, tokenize with the 33-token
-  alphabet, write cached `{concept}.pkl` + a fixed protein split under
-  `$NANOPROT_BASE_DIR/probes/`.
-- Keep it modest first (a few thousand proteins with clean labels) — enough for stable
-  linear probes, small enough to iterate.
+1. **Published benchmark** (NetSurfP-2.0 / CB513) — standard sequences + a *fixed*
+   train/test split; gives numbers directly comparable to ESM-2 / prior PLM work on
+   the same test set.
+2. **Custom Swiss-Prot subset** — pinned Swiss-Prot release (provenance recorded like
+   `prepare_uniref50.py`), helix/strand/turn feature annotations → SS3, protein-level
+   split. Fully in-repo and reproducible.
+3. **DSSP from AlphaFold** — download AF PDBs for the probe proteins, run DSSP
+   (`mkdssp`), reduce DSSP-8 → SS3. Gold-standard *structural* labels.
+
+Two agreement analyses fall out — this is the point of doing all three:
+
+- **Conclusion-level (primary):** is the architecture ordering / scaling trend /
+  best-layer the *same* across all three datasets? If gpt2-vs-mamba replicates on
+  published **and** Swiss-Prot **and** DSSP, the finding is source-independent — a far
+  stronger claim than any single dataset.
+- **Label-level (validation):** on proteins covered by *both* Swiss-Prot annotations
+  and DSSP-from-AF, how often do the per-residue SS3 labels agree? Quantifies how noisy
+  annotation-based labels are vs structural ground truth.
+
+`scripts/prepare_probe_data.py --source {netsurfp,swissprot,dssp}` writes each cached
+label set + split under `$NANOPROT_BASE_DIR/probes/ss3_{source}/`. Keep each modest
+first (a few thousand proteins). **Build order: stand up the pipeline on ONE source
+first (the published benchmark — cleanest download), prove extraction + probe
+end-to-end, then add the other two and run the triangulation.**
 
 ## 7. Metrics & outputs
 
@@ -154,13 +173,14 @@ tests/
   - **Self-containment** — re-implement Swiss-Prot parsing cleanly in nanoprot rather
     than importing the thesis code.
 
-## 11. Open decisions (for sign-off)
+## 11. Decisions (resolved 2026-06-15)
 
-1. **Concept set for Phase 1:** SS3 only (recommended), or SS3 + sites together?
-2. **SS3 label source:** Swiss-Prot helix/strand feature annotations, or DSSP computed
-   from AlphaFold structures (denser, but adds a structure-download dependency)?
-3. **esm2 handling:** report separately as "encoder reference" (recommended), or
-   exclude esm2 from the headline cross-arch probe entirely and keep it AR-only?
-4. **Probe set size / source:** a curated few-thousand-protein Swiss-Prot subset — any
-   preferred existing benchmark split (e.g. a published SS3 set) to use instead for
-   comparability with prior work?
+1. **Concept set for Phase 1:** SS3 only — start narrow; sites + family in Phase 2.
+2. **SS3 label source:** **all three** — published benchmark + custom Swiss-Prot +
+   DSSP-from-AlphaFold — **triangulated** (§6). Build on the published benchmark first,
+   then add the other two and run the agreement analysis.
+3. **esm2 handling:** reported **separately as the "encoder reference"** (never crowned
+   on a cross-objective gap; the rigorous head-to-head is gpt2-vs-mamba, §4).
+4. **Probe set:** each source brings its own set + split — the published benchmark for
+   prior-work comparability, Swiss-Prot for in-repo reproducibility, DSSP for
+   structural ground truth.
