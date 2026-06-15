@@ -85,7 +85,7 @@ def test_write_cache_roundtrips_through_loader(tmp_path) -> None:
 # ---------------------------------------------------------------------------
 
 _SP_XML = """<?xml version="1.0"?>
-<uniprot xmlns="http://uniprot.org/uniprot">
+<uniprot xmlns="https://uniprot.org/uniprot">
   <entry><accession>P00001</accession>
     <feature type="helix"><location><begin position="2"/><end position="4"/></location></feature>
     <feature type="strand"><location><begin position="6"/><end position="7"/></location></feature>

@@ -145,7 +145,6 @@ def _download(name: str, dest: Path) -> None:
 # Swiss-Prot source (experimental-structure SS3 from HELIX/STRAND/TURN features)
 # ---------------------------------------------------------------------------
 
-_SP_NS = "{http://uniprot.org/uniprot}"
 _SP_URL = ("https://ftp.uniprot.org/pub/databases/uniprot/current_release/"
            "knowledgebase/complete/uniprot_sprot.xml.gz")
 _SP_SS = {"helix": 0, "strand": 1, "turn": 2}   # turn folds into coil (2)
@@ -167,20 +166,23 @@ def parse_swissprot(path, max_proteins=None) -> List[Tuple[str, str, List[int]]]
     with opener(path, "rb") as fh:
         context = ET.iterparse(fh, events=("start", "end"))
         _, root = next(context)
+        # Detect the namespace from the root tag (UniProt switched http->https; this
+        # is robust to either and to no namespace, e.g. in the synthetic test).
+        ns = root.tag[:root.tag.index("}") + 1] if "}" in root.tag else ""
         for event, elem in context:
-            if event != "end" or elem.tag != _SP_NS + "entry":
+            if event != "end" or elem.tag != ns + "entry":
                 continue
-            acc = elem.findtext(_SP_NS + "accession")
-            seq_el = elem.find(_SP_NS + "sequence")
+            acc = elem.findtext(ns +"accession")
+            seq_el = elem.find(ns +"sequence")
             seq = "".join((seq_el.text or "").split()) if seq_el is not None else ""
             spans, has_helix_strand = [], False
-            for feat in elem.findall(_SP_NS + "feature"):
+            for feat in elem.findall(ns +"feature"):
                 ftype = feat.get("type")
                 if ftype not in _SP_SS:
                     continue
-                loc = feat.find(_SP_NS + "location")
-                b_el = loc.find(_SP_NS + "begin") if loc is not None else None
-                e_el = loc.find(_SP_NS + "end") if loc is not None else None
+                loc = feat.find(ns +"location")
+                b_el = loc.find(ns +"begin") if loc is not None else None
+                e_el = loc.find(ns +"end") if loc is not None else None
                 if b_el is None or e_el is None or not b_el.get("position") or not e_el.get("position"):
                     continue
                 spans.append((int(b_el.get("position")), int(e_el.get("position")), _SP_SS[ftype]))
