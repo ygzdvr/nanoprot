@@ -53,6 +53,11 @@ dev = [
     "ruff>=0.5",
     "mypy>=1.10",
 ]
+# Probing harness: structure-based SS for the DSSP-from-AlphaFold label source.
+# Only needed by `prepare_probe_data.py --source dssp` (imported lazily there).
+probe = [
+    "biotite>=1.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/ygzdvr/nanoprot"
