@@ -93,6 +93,36 @@ scale,"** not strictly monotonic widening. The win also holds at matched **compu
 not just matched parameters: gpt2's iso-FLOP frontier lies below mamba's across the
 whole FLOP range. (`scripts/scaling_rigor.py`; see `docs/figures/scaling_rigor.png`.)
 
+## Cross-architecture probing (Pillar 3, preliminary)
+
+The scaling result above is *intrinsic loss*. Does the architecture that scales best at
+next-residue prediction also produce the most **biologically decodable** representations?
+We train frozen-model linear probes for **3-state secondary structure** (NetSurfP-2.0,
+tested on CB513) on the residual stream of every released checkpoint at every layer, and
+report the best layer (selected on validation) as **learned − baseline** — the same probe
+on a random-init model of the identical architecture. Seed 0, all four scales:
+
+| arch | XS | S | M | L | abs. macro-F1 (L) |
+|---|---:|---:|---:|---:|---:|
+| **gpt2** (AR) | +0.091 | +0.141 | +0.191 | **+0.232** | 0.671 |
+| mamba (AR) | +0.090 | +0.102 | +0.136 | +0.186 | 0.658 |
+| esm2 (MLM, encoder ref.) | +0.039 | +0.189 | +0.242 | +0.282 | 0.739 |
+
+1. **All architectures scale** — SS decodability over the random baseline grows
+   monotonically with model size for all three.
+2. **The AR head-to-head cross-validates the headline:** gpt2 beats mamba on SS
+   decodability at S/M/L (tied at XS), and gpt2's *absolute* score overtakes mamba at
+   M/L (0.671 vs 0.658 at L) — the same crossover as bits-per-residue, now on a
+   *downstream biological* task.
+3. **esm2 wins absolute decodability** (bidirectional context sees both neighbours) —
+   reported separately as the **encoder reference**, not an architecture win, per the
+   encoder-vs-decoder caveat. Structure is most decodable in the **late layers**,
+   deepening with scale (L best layer: gpt2 21/24, mamba 27/30, esm2 32/34).
+
+> Caveat: **seed 0 only** (no error bars yet) and one of three planned label sources
+> (NetSurfP/CB513); the Swiss-Prot + DSSP-from-AlphaFold triangulation and 3-seed error
+> bars are next. (`scripts/run_probes.py`, `scripts/plot_probes.py`; `docs/figures/probes.png`.)
+
 ## A methodological note worth keeping
 
 A 120-step, sub-sampled **calibration** run suggested the *opposite* — mamba
@@ -102,8 +132,10 @@ convergence matters.
 
 ## Figures
 - `docs/figures/scaling_laws.png` — L(N) power-law fits + α per architecture.
+- `docs/figures/scaling_rigor.png` — bootstrap-CI α + iso-FLOP + per-scale gap.
 - `docs/figures/scaling_curves.png` — metric vs. parameters.
 - `docs/figures/training_curves.png` — validation loss vs. residues-seen.
+- `docs/figures/probes.png` — Pillar 3: SS3 probe scaling transfer + layer-wise.
 
 ## Reproduce
 ```bash

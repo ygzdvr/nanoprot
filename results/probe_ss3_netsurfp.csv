@@ -1,0 +1,13 @@
+arch,scale,seed,n_params,concept,source,metric,best_layer,n_layers,learned_test,baseline_test,learned_minus_baseline
+gpt2,XS,0,10739966,ss3,netsurfp,macro_f1,6,7,0.539794,0.449201,0.090593
+mamba,XS,0,9186688,ss3,netsurfp,macro_f1,6,8,0.562001,0.471828,0.090173
+esm2,XS,0,7422080,ss3,netsurfp,macro_f1,6,7,0.521622,0.482247,0.039375
+gpt2,S,0,36090440,ss3,netsurfp,macro_f1,7,10,0.590202,0.449201,0.141001
+mamba,S,0,35024000,ss3,netsurfp,macro_f1,10,12,0.591861,0.490133,0.101728
+esm2,S,0,33263040,ss3,netsurfp,macro_f1,11,13,0.665342,0.476647,0.188695
+gpt2,M,0,135390414,ss3,netsurfp,macro_f1,13,15,0.624953,0.43432,0.190632
+mamba,M,0,151749504,ss3,netsurfp,macro_f1,17,19,0.617057,0.481181,0.135876
+esm2,M,0,147616000,ss3,netsurfp,macro_f1,23,31,0.715439,0.473549,0.24189
+gpt2,L,0,599354680,ss3,netsurfp,macro_f1,21,24,0.670708,0.438448,0.23226
+mamba,L,0,630572288,ss3,netsurfp,macro_f1,27,30,0.658325,0.472782,0.185543
+esm2,L,0,649141760,ss3,netsurfp,macro_f1,32,34,0.739453,0.457521,0.281932
