@@ -24,3 +24,12 @@ from nanoprot.eval.probe.linear import (  # noqa: F401
     macro_f1,
     probe_layer_sweep,
 )
+from nanoprot.eval.probe.labels import (  # noqa: F401
+    ProbeDataset,
+    ProbeProtein,
+    assign_splits,
+    default_tokenizer,
+    encode_protein,
+    load_probe_dataset,
+    tokenize_and_align,
+)
