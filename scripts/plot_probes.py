@@ -37,7 +37,6 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 _COLOR = {"gpt2": "#1f4e79", "mamba": "#b5471f", "esm2": "#3f7f3f"}
 _MARK = {"gpt2": "o", "mamba": "s", "esm2": "D"}
-_LINESTYLE = ["-", "--", ":", "-."]            # one per source (triangulation axis)
 _SCALE_ORDER = {"XS": 0, "S": 1, "M": 2, "L": 3}
 
 
@@ -101,60 +100,81 @@ def _style():
     })
 
 
+_SRC_ORDER = {"netsurfp": 0, "swissprot": 1, "dssp": 2}   # canonical-benchmark first
+
+
 def figure(rows: List[dict], sidecars: List[dict], out: Path, metric: str = "macro_f1") -> None:
+    """One scaling panel PER source (each: 3 archs, shared y-axis so the replication is
+    obvious) + a layer-wise panel. Adaptive grid; degrades to 1x2 for a single source."""
     _style()
-    fig, (axa, axb) = plt.subplots(1, 2, figsize=(7.0, 3.1), constrained_layout=True)
-
-    # (a) scaling transfer: learned - baseline vs params, color=arch, linestyle=source
     agg = aggregate_scaling(rows)
-    sources = sorted({s for (s, _a) in agg})
-    style_of = {s: _LINESTYLE[i % len(_LINESTYLE)] for i, s in enumerate(sources)}
-    for (source, arch), pts in sorted(agg.items()):
-        xs = [p[0] for p in pts if p[0] > 0]
-        ys = [p[2] for p in pts if p[0] > 0]
-        es = [p[3] for p in pts if p[0] > 0]
-        if not xs:
-            continue
-        axa.errorbar(xs, ys, yerr=es, color=_COLOR.get(arch, "0.3"), ls=style_of[source],
-                     marker=_MARK.get(arch, "o"), ms=4, lw=1.2, capsize=2,
-                     label=f"{arch}" + (f" · {source}" if len(sources) > 1 else ""))
-    axa.axhline(0, color="0.6", lw=0.8, ls=":")
-    axa.set_xscale("log"); axa.set_xlabel("parameters")
-    axa.set_ylabel(f"probe score (learned − baseline, {metric})")
-    axa.set_title("scaling transfer"); axa.grid(True, color="0.93", lw=0.6)
-    axa.text(-0.2, 1.03, "a", transform=axa.transAxes, fontsize=10, fontweight="bold")
-    if agg:
-        axa.legend(frameon=False)
-    else:
-        axa.text(0.5, 0.5, "(no results yet)", transform=axa.transAxes,
-                 ha="center", va="center", color="0.6")
+    sources = sorted({s for (s, _a) in agg}, key=lambda s: (_SRC_ORDER.get(s, 9), s))
+    n_src = len(sources)
+    n_panels = n_src + 1                                   # scaling-per-source + layer-wise
+    ncols = n_panels if n_panels <= 3 else 2
+    nrows = -(-n_panels // ncols)                          # ceil
+    fig, axes = plt.subplots(nrows, ncols, figsize=(3.4 * ncols, 3.0 * nrows),
+                             constrained_layout=True, squeeze=False)
+    flat = [ax for row in axes for ax in row]
+    tag = "abcdefghij"
 
-    # (b) layer-wise test metric vs relative depth (largest scale, primary source)
+    # shared y-range across sources so the panels are directly comparable
+    all_ys = [p[2] for (_s, _a), pts in agg.items() for p in pts if p[0] > 0]
+    ylim = (min(all_ys + [0.0]) - 0.02, max(all_ys) + 0.02) if all_ys else None
+
+    # (a..) one scaling panel per source
+    for i, source in enumerate(sources):
+        ax = flat[i]
+        for arch in ("gpt2", "mamba", "esm2"):
+            pts = agg.get((source, arch))
+            if not pts:
+                continue
+            xs = [p[0] for p in pts if p[0] > 0]
+            ys = [p[2] for p in pts if p[0] > 0]
+            es = [p[3] for p in pts if p[0] > 0]
+            if xs:
+                ax.errorbar(xs, ys, yerr=es, color=_COLOR.get(arch, "0.3"),
+                            marker=_MARK.get(arch, "o"), ms=4, lw=1.3, capsize=2, label=arch)
+        ax.axhline(0, color="0.6", lw=0.8, ls=":")
+        ax.set_xscale("log"); ax.set_xlabel("parameters")
+        if ylim:
+            ax.set_ylim(*ylim)
+        if i == 0:
+            ax.set_ylabel(f"learned − baseline ({metric})")
+        ax.set_title(source); ax.grid(True, color="0.93", lw=0.6)
+        ax.text(-0.18, 1.04, tag[i], transform=ax.transAxes, fontsize=10, fontweight="bold")
+        ax.legend(frameon=False, fontsize=6.5)
+
+    # (last) layer-wise test metric vs relative depth (primary source, largest scale)
+    axb = flat[n_src]
     primary = sources[0] if sources else (rows[0]["source"] if rows else None)
     drew = False
     if primary:
         for arch, d in sorted(_largest_scale_sidecars(sidecars, primary).items()):
             pl = d["learned_per_layer"]
-            xs = [p["rel_depth"] for p in pl]
-            ys = [p["test"][metric] for p in pl]
-            axb.plot(xs, ys, color=_COLOR.get(arch, "0.3"), marker=_MARK.get(arch, "o"),
+            axb.plot([p["rel_depth"] for p in pl], [p["test"][metric] for p in pl],
+                     color=_COLOR.get(arch, "0.3"), marker=_MARK.get(arch, "o"),
                      ms=3, lw=1.2, label=f"{arch} ({d['row']['scale']})")
             drew = True
     axb.set_xlabel("relative depth"); axb.set_ylabel(f"test {metric}")
     axb.set_title(f"where structure lives{f'  ·  {primary}' if primary else ''}")
     axb.grid(True, color="0.93", lw=0.6)
-    axb.text(-0.2, 1.03, "b", transform=axb.transAxes, fontsize=10, fontweight="bold")
+    axb.text(-0.18, 1.04, tag[n_src], transform=axb.transAxes, fontsize=10, fontweight="bold")
     if drew:
         axb.legend(frameon=False)
     else:
         axb.text(0.5, 0.5, "layer-wise\n(needs sidecar JSONs)", transform=axb.transAxes,
                  ha="center", va="center", color="0.6", fontsize=7)
 
+    for ax in flat[n_panels:]:                            # hide any spare grid cells
+        ax.set_visible(False)
+
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out.with_suffix(".png"), bbox_inches="tight")
     fig.savefig(out.with_suffix(".pdf"), bbox_inches="tight")
     plt.close(fig)
-    print(f"  wrote {out.with_suffix('.png')}  ({len(rows)} rows, {len(sidecars)} sidecars)")
+    print(f"  wrote {out.with_suffix('.png')}  ({len(rows)} rows, {len(sidecars)} sidecars, "
+          f"{n_src} source(s))")
 
 
 def main() -> int:
