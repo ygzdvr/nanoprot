@@ -2,8 +2,8 @@
 # =============================================================================
 # nanoprot — cross-architecture probe sweep (Pillar 3)
 #
-# For each of the 36 release checkpoints, probe every cached SS3 source under
-# $NANOPROT_BASE_DIR/probes/ss3_* (netsurfp, and later swissprot / dssp), appending
+# For each of the 36 release checkpoints, probe every cached source under
+# $NANOPROT_BASE_DIR/probes/*/ (ss3/ss8/rsa across netsurfp/swissprot/dssp), appending
 # one results row per (checkpoint, source) to probe_results/<source>.csv plus a
 # per-layer JSON sidecar. Forward passes + linear probes only — NO training.
 #
@@ -64,9 +64,12 @@ CELL="${CELLS[$SLURM_ARRAY_TASK_ID]}"
 echo "  probe task ${SLURM_ARRAY_TASK_ID}/${N_CELLS}: $(basename "$CELL")"
 
 shopt -s nullglob
-SOURCES=("$NANOPROT_BASE_DIR"/probes/ss3_*)
+SOURCES=()
+for d in "$NANOPROT_BASE_DIR"/probes/*/; do
+    [ -f "${d}meta.json" ] && SOURCES+=("${d%/}")   # any cache dir (ss3/ss8/rsa/...); skips raw/
+done
 if [ ${#SOURCES[@]} -eq 0 ]; then
-    echo "ERROR: no cached probe datasets at $NANOPROT_BASE_DIR/probes/ss3_* — run prepare_probe_data first." >&2
+    echo "ERROR: no cached probe datasets at $NANOPROT_BASE_DIR/probes/*/ (with meta.json) — run prepare_probe_data first." >&2
     exit 1
 fi
 

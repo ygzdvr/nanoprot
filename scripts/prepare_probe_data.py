@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
 
+from nanoprot.eval.probe.cluster import assign_splits_clustered
 from nanoprot.eval.probe.labels import assign_splits
 
 # -- NetSurfP-2.0 feature layout (confirmed against the DTU dataset page) --------
@@ -217,6 +218,20 @@ def parse_swissprot(path, max_proteins=None) -> List[Tuple[str, str, List[int]]]
     return out
 
 
+def assign_data_splits(args, ids, seqs, fracs) -> dict:
+    """Homology-aware (mmseqs2 cluster) split when enabled (the default), else the legacy
+    per-protein hash split. Assigning whole homolog clusters to the same split is what
+    stops near-duplicates leaking across train/test (the standard PLM-probing control)."""
+    if getattr(args, "cluster_split", True):
+        try:
+            return assign_splits_clustered(ids, seqs, fracs=fracs, seed=args.seed,
+                                           min_seq_id=getattr(args, "min_seq_id", 0.3))
+        except FileNotFoundError as e:
+            print(f"  WARNING: {e}\n  -> falling back to per-protein hash split "
+                  "(NOT homology-safe).")
+    return assign_splits(ids, fracs=fracs, seed=args.seed)
+
+
 def build_swissprot(args) -> Tuple[List[dict], dict]:
     path = args.swissprot_file
     if path is None:
@@ -231,9 +246,9 @@ def build_swissprot(args) -> Tuple[List[dict], dict]:
     if not parsed:
         raise SystemExit("no Swiss-Prot proteins with helix/strand features parsed.")
     # No canonical split -> hashed 3-way (train / val / test).
-    splits = assign_splits([acc for acc, _, _ in parsed],
-                           fracs=(1 - 2 * args.val_frac, args.val_frac, args.val_frac),
-                           seed=args.seed)
+    splits = assign_data_splits(args, [acc for acc, _, _ in parsed],
+                                [seq for _, seq, _ in parsed],
+                                fracs=(1 - 2 * args.val_frac, args.val_frac, args.val_frac))
     proteins = [{"id": acc, "sequence": seq, "labels": labels, "split": splits[acc]}
                 for acc, seq, labels in parsed]
     prov = {"source": "Swiss-Prot (UniProtKB reviewed) HELIX/STRAND/TURN features",
@@ -264,8 +279,9 @@ def build_netsurfp(args) -> Tuple[List[dict], dict]:
     test_data, test_ids = load_npz(test_path)
     train_parsed = parse_netsurfp(train_data, train_ids, concept=concept, use_eval_mask=False)
     test_parsed = parse_netsurfp(test_data, test_ids, concept=concept, use_eval_mask=True)
-    tv = assign_splits([pid for pid, _, _ in train_parsed],
-                       fracs=(1.0 - args.val_frac, args.val_frac, 0.0), seed=args.seed)
+    tv = assign_data_splits(args, [pid for pid, _, _ in train_parsed],
+                            [seq for _, seq, _ in train_parsed],
+                            fracs=(1.0 - args.val_frac, args.val_frac, 0.0))
 
     def mk(pid, seq, labels, split):
         if is_reg:  # JSON has no NaN -> store unlabelled residues as null
@@ -364,8 +380,8 @@ def build_dssp(args) -> Tuple[List[dict], dict]:
         parsed.append((acc, res[0], res[1]))
     if not parsed:
         raise SystemExit(f"no usable AlphaFold structures ({n_missing} missing, {n_bad} unusable).")
-    splits = assign_splits([a for a, _, _ in parsed],
-                           fracs=(1 - 2 * args.val_frac, args.val_frac, args.val_frac), seed=args.seed)
+    splits = assign_data_splits(args, [a for a, _, _ in parsed], [s for _, s, _ in parsed],
+                                fracs=(1 - 2 * args.val_frac, args.val_frac, args.val_frac))
     proteins = [{"id": a, "sequence": s, "labels": l, "split": splits[a]} for a, s, l in parsed]
     prov = {"source": "DSSP-from-AlphaFold (biotite P-SEA 3-state on predicted structure)",
             "af_base": _AF_BASE, "af_model": _AF_MODEL, "plddt_min": args.plddt_min,
@@ -410,6 +426,12 @@ def main() -> int:
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--val-frac", type=float, default=0.1)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--no-cluster-split", dest="cluster_split", action="store_false",
+                    help="Disable homology-aware mmseqs2 clustering and use a per-protein "
+                         "hash split (NOT recommended — leaks homologs across splits).")
+    ap.add_argument("--min-seq-id", type=float, default=0.3,
+                    help="mmseqs2 sequence-identity threshold for cluster splits (0.3 = 30%%).")
+    ap.set_defaults(cluster_split=True)
     args = ap.parse_args()
 
     # swissprot / dssp only provide SS3; --concept applies to netsurfp.
@@ -427,7 +449,9 @@ def main() -> int:
     for p in proteins:
         counts[p["split"]] = counts.get(p["split"], 0) + 1
         n_labelled += sum(1 for lab in p["labels"] if lab is not None and lab != -100)
-    prov = {**prov, "split_counts": counts, "n_labelled_residues": n_labelled}
+    prov = {**prov, "split_counts": counts, "n_labelled_residues": n_labelled,
+            "cluster_split": args.cluster_split,
+            "min_seq_id": args.min_seq_id if args.cluster_split else None}
     write_cache(args.out, proteins, prov, source=args.source, concept=concept,
                 task=task, n_classes=n_classes, class_names=class_names)
     print(f"  wrote {len(proteins)} proteins ({args.source}/{concept}) to {args.out}  "
