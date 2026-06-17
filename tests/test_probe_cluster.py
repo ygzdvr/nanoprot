@@ -11,6 +11,7 @@ from nanoprot.eval.probe.cluster import (
     assign_splits_clustered,
     cluster_sequences,
     find_mmseqs,
+    select_test_disjoint_train,
     split_counts_by_cluster,
 )
 from nanoprot.eval.probe.labels import assign_splits
@@ -76,3 +77,15 @@ def test_cluster_sequences_groups_identical_sequences():
     assert m2r["other"] != m2r["dup1"]           # divergent -> different cluster
     splits = assign_splits_clustered(ids, seqs, seed=0)
     assert splits["dup1"] == splits["dup2"]      # homologs never straddle
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(find_mmseqs() is None, reason="mmseqs2 binary not installed")
+def test_select_test_disjoint_train_drops_homologs():
+    seq_a = ("MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQAPILSRVGDGTQDNLSGAEKAVQVKVKAL"
+             "PDAQFEVVHSLAKWKR")
+    seq_far = ("GGGGGGGGGGPPPPPPPPPPWWWWWWWWWWCCCCCCCCCCDDDDDDDDDDEEEEEEEEEE"
+               "FFFFFFFFFFHHHHHHHHHH")
+    keep = select_test_disjoint_train([seq_a, seq_far], [seq_a], min_seq_id=0.3)
+    assert 0 not in keep         # train[0] is the test sequence -> dropped
+    assert 1 in keep             # train[1] is unrelated -> kept

@@ -93,6 +93,12 @@ def main() -> int:
     rd = relative_depths(len(out["learned"]["per_layer"]))
     sidecar = {
         "row": row,
+        "class_names": dataset.class_names,
+        "best": {
+            "layer": out["best_layer"],
+            "learned_test": out["learned"]["best_test"],
+            "baseline_test": out["baseline"]["best_test"],
+        },
         "learned_per_layer": [
             {"layer": r["layer"], "rel_depth": rd[r["layer"]], "val": r["val"], "test": r["test"]}
             for r in out["learned"]["per_layer"]

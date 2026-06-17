@@ -38,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
 
-from nanoprot.eval.probe.cluster import assign_splits_clustered
+from nanoprot.eval.probe.cluster import assign_splits_clustered, select_test_disjoint_train
 from nanoprot.eval.probe.labels import assign_splits
 
 # -- NetSurfP-2.0 feature layout (confirmed against the DTU dataset page) --------
@@ -279,6 +279,18 @@ def build_netsurfp(args) -> Tuple[List[dict], dict]:
     test_data, test_ids = load_npz(test_path)
     train_parsed = parse_netsurfp(train_data, train_ids, concept=concept, use_eval_mask=False)
     test_parsed = parse_netsurfp(test_data, test_ids, concept=concept, use_eval_mask=True)
+    # CB513 is a FIXED external test set — purge train proteins that are CB513 homologs at
+    # the clustering threshold so the held-out benchmark stays uncontaminated.
+    n_purged = 0
+    if getattr(args, "cluster_split", True):
+        try:
+            keep = select_test_disjoint_train(
+                [seq for _, seq, _ in train_parsed], [seq for _, seq, _ in test_parsed],
+                min_seq_id=getattr(args, "min_seq_id", 0.3))
+            n_purged = len(train_parsed) - len(keep)
+            train_parsed = [train_parsed[i] for i in keep]
+        except FileNotFoundError:
+            pass   # assign_data_splits will warn + fall back to per-protein hash splits
     tv = assign_data_splits(args, [pid for pid, _, _ in train_parsed],
                             [seq for _, seq, _ in train_parsed],
                             fracs=(1.0 - args.val_frac, args.val_frac, 0.0))
@@ -296,7 +308,8 @@ def build_netsurfp(args) -> Tuple[List[dict], dict]:
     prov = {"source": "NetSurfP-2.0 (Klausen et al. 2019)", "base_url": _DTU_BASE,
             "concept": concept, "train_file": args.train_file, "test_file": args.test_file,
             "aa_order": NSP_AA_ORDER, "q8_order": NSP_Q8_ORDER,
-            "val_frac": args.val_frac, "seed": args.seed}
+            "val_frac": args.val_frac, "seed": args.seed,
+            "n_train_test_homologs_purged": n_purged}
     return proteins, prov
 
 

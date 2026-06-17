@@ -6,8 +6,8 @@ import torch
 
 from nanoprot.eval.probe.linear import (
     accuracy, evaluate_probe, evaluate_regression, fit_linear_probe,
-    fit_linear_regression, flatten_residues, macro_f1, probe_layer_sweep,
-    r2_score, spearman_corr, valid_mask,
+    fit_linear_regression, flatten_residues, macro_f1, per_class_f1,
+    probe_layer_sweep, r2_score, spearman_corr, valid_mask,
 )
 
 
@@ -26,6 +26,15 @@ def test_linear_probe_learns_separable_classes() -> None:
     X, y = _blobs(100, d, centers, seed=1)
     probe = fit_linear_probe(X, y, 3, epochs=300, seed=0, device="cpu")
     assert evaluate_probe(probe, X, y, 3)["accuracy"] > 0.95
+
+
+def test_per_class_f1_averages_to_macro() -> None:
+    y_true = torch.tensor([0, 0, 1, 1, 2, 2])
+    y_pred = torch.tensor([0, 1, 1, 1, 2, 2])
+    pcf = per_class_f1(y_true, y_pred, 3)
+    assert len(pcf) == 3
+    assert abs(sum(pcf) / 3 - macro_f1(y_true, y_pred, 3)) < 1e-6
+    assert abs(pcf[2] - 1.0) < 1e-6           # class 2 predicted perfectly -> F1 = 1
 
 
 def test_standardization_handles_large_feature_scale() -> None:

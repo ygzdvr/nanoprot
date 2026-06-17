@@ -139,8 +139,9 @@ def accuracy(y_true, y_pred) -> float:
     return float((y_true == y_pred).float().mean()) if y_true.numel() else float("nan")
 
 
-def macro_f1(y_true, y_pred, n_classes: int) -> float:
-    """Unweighted mean per-class F1 (handles class imbalance better than accuracy)."""
+def per_class_f1(y_true, y_pred, n_classes: int) -> List[float]:
+    """Per-class F1 scores (the vector :func:`macro_f1` averages). Exposed for
+    class-resolved reporting — e.g. helix / strand / coil F1 separately."""
     y_true = torch.as_tensor(y_true)
     y_pred = torch.as_tensor(y_pred, device=y_true.device)
     f1s = []
@@ -150,13 +151,20 @@ def macro_f1(y_true, y_pred, n_classes: int) -> float:
         fn = ((y_pred != c) & (y_true == c)).sum().float()
         denom = 2 * tp + fp + fn
         f1s.append(float(2 * tp / denom) if denom > 0 else 0.0)
+    return f1s
+
+
+def macro_f1(y_true, y_pred, n_classes: int) -> float:
+    """Unweighted mean per-class F1 (handles class imbalance better than accuracy)."""
+    f1s = per_class_f1(y_true, y_pred, n_classes)
     return sum(f1s) / len(f1s)
 
 
-def evaluate_probe(probe: LinearProbe, X, y, n_classes: int) -> Dict[str, float]:
+def evaluate_probe(probe: LinearProbe, X, y, n_classes: int) -> Dict[str, object]:
     y = torch.as_tensor(y, dtype=torch.long)
     pred = probe.predict(X).to(y.device)
-    return {"accuracy": accuracy(y, pred), "macro_f1": macro_f1(y, pred, n_classes)}
+    return {"accuracy": accuracy(y, pred), "macro_f1": macro_f1(y, pred, n_classes),
+            "per_class_f1": per_class_f1(y, pred, n_classes)}
 
 
 def r2_score(y_true, y_pred) -> float:

@@ -119,6 +119,22 @@ def assign_splits_clustered(ids: Sequence[str], seqs: Sequence[str],
     return assign_splits_by_cluster(member_to_rep, fracs=fracs, seed=seed)
 
 
+def select_test_disjoint_train(train_seqs: Sequence[str], test_seqs: Sequence[str], *,
+                               min_seq_id: float = 0.3, **cluster_kw):
+    """Indices of ``train_seqs`` that do **not** share a cluster with any test sequence.
+
+    Use when the test split is a *fixed external benchmark* (e.g. CB513) that must stay a
+    clean held-out set: cluster train+test together at ``min_seq_id`` and drop every train
+    protein whose cluster contains a test protein, so train becomes provably disjoint from
+    test at the identity threshold. Positional keys avoid any train/test id collision.
+    """
+    keys = [f"tr{i}" for i in range(len(train_seqs))] + [f"te{j}" for j in range(len(test_seqs))]
+    m2r = cluster_sequences(keys, list(train_seqs) + list(test_seqs),
+                            min_seq_id=min_seq_id, **cluster_kw)
+    test_reps = {m2r[f"te{j}"] for j in range(len(test_seqs))}
+    return [i for i in range(len(train_seqs)) if m2r[f"tr{i}"] not in test_reps]
+
+
 def split_counts_by_cluster(member_to_rep: Dict[str, str], splits: Dict[str, str]) -> dict:
     """Diagnostics for a clustered split: protein counts, cluster counts, and a check
     that no cluster's members straddle two splits (the property that prevents leakage)."""
