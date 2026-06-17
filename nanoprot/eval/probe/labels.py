@@ -50,6 +50,7 @@ class ProbeDataset:
     class_names: List[str]
     proteins: List[ProbeProtein]
     ignore_index: int = DEFAULT_IGNORE_INDEX
+    task: str = "classification"          # "classification" | "regression"
     meta: dict = field(default_factory=dict)
 
     def split(self, name: str) -> List[ProbeProtein]:
@@ -69,6 +70,7 @@ def load_probe_dataset(path: Union[str, Path]) -> ProbeDataset:
     meta = json.loads((path / "meta.json").read_text())
     n_classes = int(meta["n_classes"])
     ignore = int(meta.get("ignore_index", DEFAULT_IGNORE_INDEX))
+    task = meta.get("task", "classification")
 
     proteins: List[ProbeProtein] = []
     with (path / "data.jsonl").open("r", encoding="utf-8") as fh:
@@ -77,20 +79,26 @@ def load_probe_dataset(path: Union[str, Path]) -> ProbeDataset:
             if not line:
                 continue
             d = json.loads(line)
-            p = ProbeProtein(d["id"], d["sequence"], list(d["labels"]), d["split"])
+            if task == "regression":
+                # continuous targets; JSON null marks an unlabelled residue -> NaN.
+                labels = [float("nan") if x is None else float(x) for x in d["labels"]]
+            else:
+                labels = list(d["labels"])
+            p = ProbeProtein(d["id"], d["sequence"], labels, d["split"])
             if len(p.sequence) != len(p.labels):
                 raise ValueError(
                     f"protein {p.id}: {len(p.sequence)} residues vs {len(p.labels)} labels"
                 )
-            for lab in p.labels:
-                if lab != ignore and not (0 <= lab < n_classes):
-                    raise ValueError(
-                        f"protein {p.id}: label {lab} outside [0,{n_classes}) and != ignore({ignore})"
-                    )
+            if task != "regression":
+                for lab in p.labels:
+                    if lab != ignore and not (0 <= lab < n_classes):
+                        raise ValueError(
+                            f"protein {p.id}: label {lab} outside [0,{n_classes}) and != ignore({ignore})"
+                        )
             proteins.append(p)
     return ProbeDataset(
         concept=meta["concept"], source=meta["source"], n_classes=n_classes,
-        class_names=list(meta["class_names"]), ignore_index=ignore,
+        class_names=list(meta["class_names"]), ignore_index=ignore, task=task,
         proteins=proteins, meta=meta,
     )
 

@@ -48,7 +48,9 @@ def main() -> int:
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--max-residues", type=int, default=None,
                     help="Cap residues per split (bounds memory at large scale).")
-    ap.add_argument("--metric", default="macro_f1", choices=["macro_f1", "accuracy"])
+    ap.add_argument("--metric", default=None,
+                    choices=["macro_f1", "accuracy", "r2", "spearman"],
+                    help="Default: macro_f1 (classification) / r2 (regression), by task.")
     ap.add_argument("--epochs", type=int, default=300)
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
@@ -71,7 +73,8 @@ def main() -> int:
 
     row = {
         "arch": arch, "scale": scale, "seed": seed, "n_params": meta.get("n_params"),
-        "concept": out["concept"], "source": out["source"], "metric": out["metric"],
+        "concept": out["concept"], "source": out["source"], "task": out["task"],
+        "metric": out["metric"],
         "best_layer": out["best_layer"], "n_layers": len(out["learned"]["per_layer"]),
         "learned_test": round(out["learned_test"], 6),
         "baseline_test": round(out["baseline_test"], 6),
@@ -103,7 +106,7 @@ def main() -> int:
     side.write_text(json.dumps(sidecar, indent=2))
 
     print(f"  {arch}-{scale}-s{seed} [{out['source']}/{out['concept']}]: "
-          f"best L{out['best_layer']} ({args.metric}) test={out['learned_test']:.4f} "
+          f"best L{out['best_layer']} ({out['metric']}) test={out['learned_test']:.4f} "
           f"baseline={out['baseline_test']:.4f} learned-baseline={out['learned_minus_baseline']:+.4f}")
     return 0
 

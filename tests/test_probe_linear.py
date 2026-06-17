@@ -5,8 +5,9 @@ from __future__ import annotations
 import torch
 
 from nanoprot.eval.probe.linear import (
-    accuracy, evaluate_probe, fit_linear_probe, flatten_residues, macro_f1,
-    probe_layer_sweep,
+    accuracy, evaluate_probe, evaluate_regression, fit_linear_probe,
+    fit_linear_regression, flatten_residues, macro_f1, probe_layer_sweep,
+    r2_score, spearman_corr, valid_mask,
 )
 
 
@@ -62,6 +63,29 @@ def test_layer_sweep_selects_best_layer_on_validation() -> None:
     # the noise layers should be near chance on test
     noise_layers = [r for r in out["per_layer"] if r["layer"] != 1]
     assert all(r["test"]["accuracy"] < 0.75 for r in noise_layers)
+
+
+def test_linear_regression_recovers_linear_target() -> None:
+    d, n = 8, 200
+    g = torch.Generator().manual_seed(5)
+    X = torch.randn(n, d, generator=g)
+    w = torch.randn(d, generator=g)
+    y = X @ w + 0.05 * torch.randn(n, generator=g)        # linear target + small noise
+    reg = fit_linear_regression(X, y, epochs=500, seed=0, device="cpu")
+    m = evaluate_regression(reg, X, y)
+    assert m["r2"] > 0.95 and m["spearman"] > 0.95
+
+
+def test_r2_and_spearman_edge_cases() -> None:
+    y = torch.tensor([1.0, 2.0, 3.0, 4.0])
+    assert abs(r2_score(y, y) - 1.0) < 1e-6
+    assert abs(spearman_corr(y, y) - 1.0) < 1e-6
+    assert spearman_corr(y, -y) < -0.99                   # reversed ranks -> -1
+
+
+def test_valid_mask_handles_nan_and_ignore() -> None:
+    labels = torch.tensor([0.5, float("nan"), -100.0, 0.7])   # value / NaN / -100 / value
+    assert valid_mask(labels, ignore_index=-100).tolist() == [True, False, False, True]
 
 
 def test_flatten_residues_drops_ignore_positions() -> None:

@@ -41,6 +41,21 @@ def test_parse_decodes_sequence_and_ss3() -> None:
     assert lab1 == [0, 1, 2]             # I->helix; B->strand; S->coil
 
 
+def test_parse_netsurfp_ss8_uses_raw_q8() -> None:
+    _, _, lab0 = parse_netsurfp(_synthetic(), concept="ss8")[0]
+    # protein 0 Q8 = "GHEC"; indices into GHIBESTC: G=0, H=1, E=4, C=7
+    assert lab0 == [0, 1, 4, 7]
+
+
+def test_parse_netsurfp_rsa_is_regression() -> None:
+    data = _synthetic()
+    data[0, 0, 55] = 0.3      # set RSA (ch 55) on the first two residues of protein 0
+    data[0, 1, 55] = 0.8
+    _, _, lab0 = parse_netsurfp(data, concept="rsa")[0]
+    assert lab0[0] == pytest.approx(0.3) and lab0[1] == pytest.approx(0.8)
+    assert all(isinstance(x, float) for x in lab0)        # continuous targets
+
+
 def test_eval_mask_masks_unscored_positions() -> None:
     data = _synthetic()
     data[0, 0, CH_EVAL_MASK] = 1.0       # only score positions 0 and 2 of protein 0

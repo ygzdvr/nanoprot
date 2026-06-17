@@ -89,6 +89,46 @@ def fit_linear_probe(X, y, n_classes: int, *, standardize: bool = True,
                        lin.weight.detach(), lin.bias.detach(), n_classes)
 
 
+@dataclass
+class LinearRegressor:
+    """A fitted standardized linear-regression probe (for continuous targets)."""
+
+    mean: torch.Tensor      # (1, d)
+    std: torch.Tensor       # (1, d)
+    weight: torch.Tensor    # (1, d)
+    bias: torch.Tensor      # (1,)
+
+    def predict(self, X) -> torch.Tensor:
+        X = torch.as_tensor(X, dtype=torch.float32, device=self.weight.device)
+        Xs = (X - self.mean) / self.std
+        return (Xs @ self.weight.t() + self.bias).squeeze(-1)
+
+
+def fit_linear_regression(X, y, *, standardize: bool = True, epochs: int = 300,
+                          lr: float = 0.05, weight_decay: float = 1e-4, seed: int = 0,
+                          device: Optional[str] = None) -> LinearRegressor:
+    """Fit a standardized linear-regression probe (MSE). Deterministic given ``seed``."""
+    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    X = torch.as_tensor(X, dtype=torch.float32, device=device)
+    y = torch.as_tensor(y, dtype=torch.float32, device=device)
+    d = X.shape[1]
+    if standardize:
+        mean = X.mean(dim=0, keepdim=True)
+        std = X.std(dim=0, keepdim=True).clamp_min(1e-6)
+    else:
+        mean = torch.zeros(1, d, device=device)
+        std = torch.ones(1, d, device=device)
+    Xs = (X - mean) / std
+    torch.manual_seed(seed)
+    lin = nn.Linear(d, 1).to(device)
+    opt = torch.optim.Adam(lin.parameters(), lr=lr, weight_decay=weight_decay)
+    for _ in range(epochs):
+        opt.zero_grad(set_to_none=True)
+        F.mse_loss(lin(Xs).squeeze(-1), y).backward()
+        opt.step()
+    return LinearRegressor(mean.detach(), std.detach(), lin.weight.detach(), lin.bias.detach())
+
+
 # ---------------------------------------------------------------------------
 # Metrics
 # ---------------------------------------------------------------------------
@@ -117,6 +157,42 @@ def evaluate_probe(probe: LinearProbe, X, y, n_classes: int) -> Dict[str, float]
     y = torch.as_tensor(y, dtype=torch.long)
     pred = probe.predict(X).to(y.device)
     return {"accuracy": accuracy(y, pred), "macro_f1": macro_f1(y, pred, n_classes)}
+
+
+def r2_score(y_true, y_pred) -> float:
+    """Coefficient of determination (1 − SS_res/SS_tot)."""
+    y_true = torch.as_tensor(y_true, dtype=torch.float32)
+    y_pred = torch.as_tensor(y_pred, dtype=torch.float32, device=y_true.device)
+    ss_tot = ((y_true - y_true.mean()) ** 2).sum()
+    if float(ss_tot) <= 0 or y_true.numel() == 0:
+        return float("nan")
+    return float(1 - ((y_true - y_pred) ** 2).sum() / ss_tot)
+
+
+def spearman_corr(y_true, y_pred) -> float:
+    """Spearman rank correlation (Pearson correlation of ranks; ties broken by argsort)."""
+    y_true = torch.as_tensor(y_true, dtype=torch.float32)
+    y_pred = torch.as_tensor(y_pred, dtype=torch.float32, device=y_true.device)
+    if y_true.numel() < 2:
+        return float("nan")
+    rt = y_true.argsort().argsort().float()
+    rp = y_pred.argsort().argsort().float()
+    rt = rt - rt.mean()
+    rp = rp - rp.mean()
+    denom = (rt.norm() * rp.norm()).clamp_min(1e-12)      # Pearson r = centered cosine
+    return float((rt * rp).sum() / denom)
+
+
+def evaluate_regression(reg: LinearRegressor, X, y) -> Dict[str, float]:
+    y = torch.as_tensor(y, dtype=torch.float32)
+    pred = reg.predict(X).to(y.device)
+    return {"r2": r2_score(y, pred), "spearman": spearman_corr(y, pred)}
+
+
+def valid_mask(labels: torch.Tensor, ignore_index: int = -100) -> torch.Tensor:
+    """Positions to keep: not NaN (regression ignore) AND != ignore_index (classification
+    ignore). Works for both int-label and float-target tensors."""
+    return (labels == labels) & (labels != ignore_index)
 
 
 # ---------------------------------------------------------------------------

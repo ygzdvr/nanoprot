@@ -46,12 +46,21 @@ NSP_Q8_ORDER = "GHIBESTC"              # channels 57-64
 CH_AA = slice(0, 20)
 CH_SEQ_MASK = 50
 CH_EVAL_MASK = 52
+CH_RSA = 55             # relative solvent accessibility (isolated), in [0, 1]
 CH_Q8 = slice(57, 65)
 MIN_FEATURES = 65
 
 # Standard Q8 -> SS3: helix {G,H,I}, strand {E,B}, coil {S,T,C}.
 Q8_TO_SS3 = {"G": 0, "H": 0, "I": 0, "E": 1, "B": 1, "S": 2, "T": 2, "C": 2}
 SS3_NAMES = ["helix", "strand", "coil"]
+SS8_NAMES = list("GHIBESTC")            # the Q8 order = the 8-class label order
+
+# Per-concept spec: (task, n_classes, class_names). NetSurfP carries all of these.
+CONCEPT_SPEC = {
+    "ss3": ("classification", 3, SS3_NAMES),
+    "ss8": ("classification", 8, SS8_NAMES),
+    "rsa": ("regression", 1, ["rsa"]),
+}
 
 _DTU_BASE = "https://services.healthtech.dtu.dk/services/NetSurfP-2.0/training_data"
 
@@ -61,17 +70,20 @@ _DTU_BASE = "https://services.healthtech.dtu.dk/services/NetSurfP-2.0/training_d
 # ---------------------------------------------------------------------------
 
 def parse_netsurfp(data: np.ndarray, ids: Optional[np.ndarray] = None, *,
-                   use_eval_mask: bool = False,
-                   ignore_index: int = -100) -> List[Tuple[str, str, List[int]]]:
-    """Decode a NetSurfP-2.0 feature array into ``(id, sequence, ss3_labels)`` per protein.
+                   concept: str = "ss3", use_eval_mask: bool = False,
+                   ignore_index: int = -100) -> List[Tuple[str, str, list]]:
+    """Decode a NetSurfP-2.0 feature array into ``(id, sequence, labels)`` per protein.
 
-    ``use_eval_mask`` (CB513) restricts labelled positions to the evaluation mask;
-    unknown residues / unscored positions get ``ignore_index``. ``len(labels) ==
-    len(sequence)`` always.
+    ``concept``: ``ss3`` (Q8->3 classes), ``ss8`` (Q8, 8 classes), or ``rsa`` (regression
+    target = relative solvent accessibility in [0,1]). ``use_eval_mask`` (CB513) restricts
+    labelled positions to the evaluation mask; unscored positions get ``ignore_index``
+    (classification) or NaN (regression). ``len(labels) == len(sequence)`` always.
     """
     if data.ndim != 3 or data.shape[2] < MIN_FEATURES:
         raise ValueError(f"expected (N, L, >={MIN_FEATURES}) array, got {data.shape}")
-    out: List[Tuple[str, str, List[int]]] = []
+    is_reg = concept == "rsa"
+    ignore_val = float("nan") if is_reg else ignore_index
+    out: List[Tuple[str, str, list]] = []
     for i in range(data.shape[0]):
         sample = data[i]
         seq_mask = sample[:, CH_SEQ_MASK] > 0.5
@@ -79,17 +91,22 @@ def parse_netsurfp(data: np.ndarray, ids: Optional[np.ndarray] = None, *,
             continue
         rows = sample[seq_mask]
         aa = rows[:, CH_AA]
-        q8 = rows[:, CH_Q8]
         aa_known = aa.sum(axis=1) > 0.5
-        aa_idx = aa.argmax(axis=1)
-        seq = "".join(NSP_AA_ORDER[j] if k else "X" for j, k in zip(aa_idx, aa_known))
-        q8_known = q8.sum(axis=1) > 0.5
-        q8_idx = q8.argmax(axis=1)
-        labels = [Q8_TO_SS3[NSP_Q8_ORDER[j]] if k else ignore_index
-                  for j, k in zip(q8_idx, q8_known)]
+        seq = "".join(NSP_AA_ORDER[j] if k else "X" for j, k in zip(aa.argmax(axis=1), aa_known))
+        if concept == "rsa":
+            labels = [float(v) for v in rows[:, CH_RSA]]
+        else:
+            q8 = rows[:, CH_Q8]
+            q8_known = q8.sum(axis=1) > 0.5
+            q8_idx = q8.argmax(axis=1)
+            if concept == "ss3":
+                labels = [Q8_TO_SS3[NSP_Q8_ORDER[j]] if k else ignore_index
+                          for j, k in zip(q8_idx, q8_known)]
+            else:  # ss8
+                labels = [int(j) if k else ignore_index for j, k in zip(q8_idx, q8_known)]
         if use_eval_mask:
             ev = rows[:, CH_EVAL_MASK] > 0.5
-            labels = [lab if e else ignore_index for lab, e in zip(labels, ev)]
+            labels = [lab if e else ignore_val for lab, e in zip(labels, ev)]
         pid = str(ids[i]) if ids is not None else f"netsurfp_{i}"
         out.append((pid, seq, labels))
     return out
@@ -116,13 +133,14 @@ def load_npz(path: Path) -> Tuple[np.ndarray, Optional[np.ndarray]]:
 # Cache writing
 # ---------------------------------------------------------------------------
 
-def write_cache(out_dir: Path, proteins: List[dict], provenance: dict,
-                source: str, ignore_index: int = -100) -> None:
+def write_cache(out_dir: Path, proteins: List[dict], provenance: dict, source: str, *,
+                concept: str = "ss3", task: str = "classification", n_classes: int = 3,
+                class_names: Optional[list] = None, ignore_index: int = -100) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "meta.json").write_text(json.dumps({
-        "concept": "ss3", "source": source, "n_classes": 3,
-        "class_names": SS3_NAMES, "ignore_index": ignore_index,
-        "provenance": provenance,
+        "concept": concept, "source": source, "task": task, "n_classes": n_classes,
+        "class_names": class_names if class_names is not None else SS3_NAMES,
+        "ignore_index": ignore_index, "provenance": provenance,
     }, indent=2))
     with (out_dir / "data.jsonl").open("w", encoding="utf-8") as fh:
         for p in proteins:
@@ -240,22 +258,28 @@ def build_netsurfp(args) -> Tuple[List[dict], dict]:
             else:
                 raise SystemExit(f"missing {path}. Download on a login node:\n"
                                  f"  curl -o {path} {_DTU_BASE}/{name}\nor re-run with --download.")
+    concept = args.concept
+    is_reg = concept == "rsa"
     train_data, train_ids = load_npz(train_path)
     test_data, test_ids = load_npz(test_path)
-    train_parsed = parse_netsurfp(train_data, train_ids, use_eval_mask=False)
-    test_parsed = parse_netsurfp(test_data, test_ids, use_eval_mask=True)  # CB513 eval mask
+    train_parsed = parse_netsurfp(train_data, train_ids, concept=concept, use_eval_mask=False)
+    test_parsed = parse_netsurfp(test_data, test_ids, concept=concept, use_eval_mask=True)
     tv = assign_splits([pid for pid, _, _ in train_parsed],
                        fracs=(1.0 - args.val_frac, args.val_frac, 0.0), seed=args.seed)
-    proteins = [{"id": pid, "sequence": seq, "labels": labels, "split": tv[pid]}
-                for pid, seq, labels in train_parsed]
-    proteins += [{"id": pid, "sequence": seq, "labels": labels, "split": "test"}
-                 for pid, seq, labels in test_parsed]
+
+    def mk(pid, seq, labels, split):
+        if is_reg:  # JSON has no NaN -> store unlabelled residues as null
+            labels = [None if (isinstance(x, float) and x != x) else float(x) for x in labels]
+        return {"id": pid, "sequence": seq, "labels": labels, "split": split}
+
+    proteins = [mk(pid, seq, labels, tv[pid]) for pid, seq, labels in train_parsed]
+    proteins += [mk(pid, seq, labels, "test") for pid, seq, labels in test_parsed]
     bad = [p["id"] for p in proteins[:50] if set(p["sequence"]) - set(NSP_AA_ORDER + "X")]
     if bad:
         raise SystemExit(f"decoded non-AA characters in {bad} — check NSP_AA_ORDER.")
     prov = {"source": "NetSurfP-2.0 (Klausen et al. 2019)", "base_url": _DTU_BASE,
-            "train_file": args.train_file, "test_file": args.test_file,
-            "aa_order": NSP_AA_ORDER, "q8_order": NSP_Q8_ORDER, "q8_to_ss3": Q8_TO_SS3,
+            "concept": concept, "train_file": args.train_file, "test_file": args.test_file,
+            "aa_order": NSP_AA_ORDER, "q8_order": NSP_Q8_ORDER,
             "val_frac": args.val_frac, "seed": args.seed}
     return proteins, prov
 
@@ -358,6 +382,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--source", default="netsurfp", choices=["netsurfp", "swissprot", "dssp"])
+    ap.add_argument("--concept", default="ss3", choices=["ss3", "ss8", "rsa"],
+                    help="Probe target (netsurfp only; swissprot/dssp are ss3). ss3/ss8 "
+                         "classification, rsa = solvent-accessibility regression.")
     # netsurfp
     ap.add_argument("--netsurfp-dir", type=Path, default=None,
                     help="Directory holding Train_HHblits.npz + CB513_HHblits.npz.")
@@ -385,6 +412,9 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
+    # swissprot / dssp only provide SS3; --concept applies to netsurfp.
+    concept = args.concept if args.source == "netsurfp" else "ss3"
+    task, n_classes, class_names = CONCEPT_SPEC[concept]
     if args.source == "netsurfp":
         proteins, prov = build_netsurfp(args)
     elif args.source == "swissprot":
@@ -396,10 +426,11 @@ def main() -> int:
     n_labelled = 0
     for p in proteins:
         counts[p["split"]] = counts.get(p["split"], 0) + 1
-        n_labelled += sum(1 for lab in p["labels"] if lab != -100)
+        n_labelled += sum(1 for lab in p["labels"] if lab is not None and lab != -100)
     prov = {**prov, "split_counts": counts, "n_labelled_residues": n_labelled}
-    write_cache(args.out, proteins, prov, source=args.source)
-    print(f"  wrote {len(proteins)} proteins ({args.source}) to {args.out}  "
+    write_cache(args.out, proteins, prov, source=args.source, concept=concept,
+                task=task, n_classes=n_classes, class_names=class_names)
+    print(f"  wrote {len(proteins)} proteins ({args.source}/{concept}) to {args.out}  "
           f"splits={counts}  labelled_residues={n_labelled:,}")
     return 0
 
