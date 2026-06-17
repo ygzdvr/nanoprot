@@ -47,6 +47,7 @@ export TOKENIZERS_PARALLELISM=false
 export HF_HUB_OFFLINE=1
 export OMP_NUM_THREADS=1          # single-threaded torch (avoids CPU-watchdog kills)
 export MKL_NUM_THREADS=1
+export NANOPROT_DISABLE_FA3=1     # compute nodes have no internet; skip FA3 fetch -> SDPA
 
 [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
 source "$NANOPROT_VENV/bin/activate"
