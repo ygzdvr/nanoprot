@@ -129,7 +129,9 @@ def _log_spaced_steps(n_iter_est: int, k: int) -> List[int]:
     return out
 
 
-def _build_config_dict(arch: str, scale: str, seed: int, *, intermediate: bool) -> Dict[str, Any]:
+def _build_config_dict(arch: str, scale: str, seed: int, *, intermediate: bool,
+                       n_intermediate: int = N_INTERMEDIATE,
+                       ckpt_root: str = "release") -> Dict[str, Any]:
     g = GRID[arch][scale]
     objective = ARCH_OBJECTIVE[arch]
     name = f"nanoprot-{arch}-{scale}-s{seed}"
@@ -170,7 +172,7 @@ def _build_config_dict(arch: str, scale: str, seed: int, *, intermediate: bool) 
             training=dict(training),
         )
         n_iter_est = int(PARAM_DATA_RATIO * probe.estimate_params() // TOTAL_BATCH_SIZE)
-        save_steps = _log_spaced_steps(n_iter_est, N_INTERMEDIATE)
+        save_steps = _log_spaced_steps(n_iter_est, n_intermediate)
 
     cfg: Dict[str, Any] = dict(
         name=name,
@@ -192,7 +194,7 @@ def _build_config_dict(arch: str, scale: str, seed: int, *, intermediate: bool) 
             wandb_mode="offline",
         ),
         checkpointing=dict(
-            output_dir=f"${{NANOPROT_BASE_DIR}}/release/{name}",
+            output_dir=f"${{NANOPROT_BASE_DIR}}/{ckpt_root}/{name}",
             save_every=-1,
             save_steps=save_steps,
         ),
@@ -242,6 +244,16 @@ def main() -> int:
     ap.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
     ap.add_argument("--intermediate", action="store_true",
                     help="Add log-spaced intermediate checkpoints (training dynamics).")
+    ap.add_argument("--n-intermediate", type=int, default=N_INTERMEDIATE,
+                    help=f"Number of log-spaced intermediate checkpoints (default {N_INTERMEDIATE}).")
+    ap.add_argument("--archs", nargs="+", default=["gpt2", "esm2", "mamba"],
+                    choices=["gpt2", "esm2", "mamba"], help="Subset of architectures to emit.")
+    ap.add_argument("--scales", nargs="+", default=SCALES, choices=SCALES,
+                    help="Subset of scale rungs to emit.")
+    ap.add_argument("--ckpt-root", default="release",
+                    help="Checkpoint dir prefix under NANOPROT_BASE_DIR. Use e.g. release_traj "
+                         "for the trajectory re-train so the released release/ ckpts aren't clobbered.")
+    ap.add_argument("--skip-calib", action="store_true", help="Do not emit calibration probes.")
     ap.add_argument("--force", action="store_true", help="Overwrite existing configs.")
     args = ap.parse_args()
 
@@ -255,10 +267,12 @@ def main() -> int:
     n_written = 0
     summary: List[str] = []
 
-    for arch in ("gpt2", "esm2", "mamba"):
-        for scale in SCALES:
+    for arch in args.archs:
+        for scale in args.scales:
             for seed in args.seeds:
-                cfg_dict = _build_config_dict(arch, scale, seed, intermediate=args.intermediate)
+                cfg_dict = _build_config_dict(arch, scale, seed, intermediate=args.intermediate,
+                                              n_intermediate=args.n_intermediate,
+                                              ckpt_root=args.ckpt_root)
                 validated = _validate(cfg_dict)            # raises on schema error
                 est = validated.estimate_params()
                 n_iter = int(PARAM_DATA_RATIO * est // TOTAL_BATCH_SIZE)
@@ -285,7 +299,7 @@ def main() -> int:
                     )
 
     # Calibration probes (one per arch, S scale).
-    for arch in ("gpt2", "esm2", "mamba"):
+    for arch in ([] if args.skip_calib else args.archs):
         cfg_dict = _calib_config_dict(arch)
         _validate(cfg_dict)
         banner = (
@@ -296,7 +310,8 @@ def main() -> int:
 
     (out / "MANIFEST.tsv").write_text("\n".join(manifest_rows) + "\n")
 
-    print(f"Wrote {n_written} training configs + 3 calibration probes to {out}/")
+    n_calib = 0 if args.skip_calib else len(args.archs)
+    print(f"Wrote {n_written} training configs + {n_calib} calibration probes to {out}/")
     print(f"Manifest: {out / 'MANIFEST.tsv'}")
     print("\nGrid (seed {} shown; all {} seeds emitted):".format(args.seeds[0], len(args.seeds)))
     print("\n".join(summary))

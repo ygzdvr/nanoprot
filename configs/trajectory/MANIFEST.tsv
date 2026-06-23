@@ -1,0 +1,13 @@
+name	arch	scale	seed	depth	d_model	n_heads	est_params	num_iter_est	config
+nanoprot-gpt2-S-s0	gpt2	S	0	9	576	9	35964864	823	configs/trajectory/nanoprot-gpt2-S-s0.yaml
+nanoprot-gpt2-S-s1	gpt2	S	1	9	576	9	35964864	823	configs/trajectory/nanoprot-gpt2-S-s1.yaml
+nanoprot-gpt2-S-s2	gpt2	S	2	9	576	9	35964864	823	configs/trajectory/nanoprot-gpt2-S-s2.yaml
+nanoprot-gpt2-M-s0	gpt2	M	0	14	896	14	135139200	3093	configs/trajectory/nanoprot-gpt2-M-s0.yaml
+nanoprot-gpt2-M-s1	gpt2	M	1	14	896	14	135139200	3093	configs/trajectory/nanoprot-gpt2-M-s1.yaml
+nanoprot-gpt2-M-s2	gpt2	M	2	14	896	14	135139200	3093	configs/trajectory/nanoprot-gpt2-M-s2.yaml
+nanoprot-mamba-S-s0	mamba	S	0	11	704	1	34615680	792	configs/trajectory/nanoprot-mamba-S-s0.yaml
+nanoprot-mamba-S-s1	mamba	S	1	11	704	1	34615680	792	configs/trajectory/nanoprot-mamba-S-s1.yaml
+nanoprot-mamba-S-s2	mamba	S	2	11	704	1	34615680	792	configs/trajectory/nanoprot-mamba-S-s2.yaml
+nanoprot-mamba-M-s0	mamba	M	0	18	1152	1	150702336	3449	configs/trajectory/nanoprot-mamba-M-s0.yaml
+nanoprot-mamba-M-s1	mamba	M	1	18	1152	1	150702336	3449	configs/trajectory/nanoprot-mamba-M-s1.yaml
+nanoprot-mamba-M-s2	mamba	M	2	18	1152	1	150702336	3449	configs/trajectory/nanoprot-mamba-M-s2.yaml
