@@ -21,7 +21,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=64G
+#SBATCH --mem=256G        # L cells gather (residues x d_model x n_layers) feats on CPU; 64G OOMs (nodes have 1.5TB)
 #SBATCH --gres=gpu:1
 #SBATCH --time=04:00:00
 #SBATCH --partition=ailab
