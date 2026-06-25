@@ -1,0 +1,4 @@
+name	arch	scale	seed	depth	d_model	n_heads	est_params	num_iter_est	config
+nanoprot-esm2-M-s0	esm2	M	0	30	640	20	147498240	3375	configs/trajectory_wave2/nanoprot-esm2-M-s0.yaml
+nanoprot-esm2-M-s1	esm2	M	1	30	640	20	147498240	3375	configs/trajectory_wave2/nanoprot-esm2-M-s1.yaml
+nanoprot-esm2-M-s2	esm2	M	2	30	640	20	147498240	3375	configs/trajectory_wave2/nanoprot-esm2-M-s2.yaml
