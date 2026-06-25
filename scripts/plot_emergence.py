@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import matplotlib  # noqa: E402
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
 
 from scripts.analyze_emergence import (  # noqa: E402
     DEFAULT_EPS, auec, emergence_times, load_curves,
@@ -144,13 +145,85 @@ def fig_vs_step(curves, out: Path) -> None:
     _save(fig, out)
 
 
-def fig_vs_valloss(curves, valloss: Dict[tuple, float], out: Path) -> None:
-    """Family 2 (matched-loss): Delta vs validation loss, exact per-checkpoint join.
+def _seed_aggregate_vs_valloss(curves, valloss, concept, source, arch, scale, n_grid=30):
+    """Seed-mean ± std of Δ on a COMMON val_loss grid (loss-controlled).
 
-    The decisive figure: at the SAME validation loss, does gpt2 expose more decodable
-    structure than mamba (representational inductive bias), or do the curves overlap
-    (a pure optimization-speed difference)?
+    Interpolates each seed's Δ(val_loss) onto a shared grid spanning the val_loss range ALL
+    that arch/scale's seeds cover, then aggregates. Aggregating by LOSS (not by step) is the
+    whole point: it compares architectures at matched language-modeling competence, which
+    they reach at different steps. Returns ``(grid, mean, std)`` or ``None``.
     """
+    seed_curves = []
+    for (c, s, a, sc, seed), curve in curves.items():
+        if (c, s, a, sc) != (concept, source, arch, scale):
+            continue
+        pts = sorted((valloss[(a, sc, seed, st)], d) for st, d in curve
+                     if (a, sc, seed, st) in valloss)
+        if len(pts) >= 2:
+            seed_curves.append(pts)
+    if not seed_curves:
+        return None
+    lo = max(pts[0][0] for pts in seed_curves)        # max over seeds of (min val_loss)
+    hi = min(pts[-1][0] for pts in seed_curves)        # min over seeds of (max val_loss)
+    if hi <= lo:
+        return None
+    grid = np.linspace(lo, hi, n_grid)
+    rows = [np.interp(grid, [p[0] for p in pts], [p[1] for p in pts]) for pts in seed_curves]
+    arr = np.array(rows)
+    return grid, arr.mean(axis=0), arr.std(axis=0)
+
+
+def fig_vs_valloss(curves, valloss: Dict[tuple, float], out: Path) -> None:
+    """Family 2 MAIN (matched-loss): seed-mean ± band of Δ vs validation loss, loss-controlled.
+
+    THE decisive figure: at the SAME validation loss, does gpt2 expose more decodable
+    structure than mamba (representational inductive bias) or do the curves overlap (a pure
+    optimization-speed difference)? Aggregated across seeds on a common val_loss grid; the
+    busy per-seed view is the supplement (:func:`fig_vs_valloss_seeds`).
+    """
+    if not valloss:
+        return
+    _style()
+    tasks = _tasks(curves)
+    archscales = sorted({(a, sc) for (_c, _s, a, sc, _seed) in curves},
+                        key=lambda t: (_ARCHES.index(t[0]) if t[0] in _ARCHES else 9,
+                                       _SCALES.index(t[1]) if t[1] in _SCALES else 9))
+    drew = False
+    ncols = min(len(tasks), 3)
+    nrows = -(-len(tasks) // ncols)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(3.4 * ncols, 2.9 * nrows),
+                             constrained_layout=True, squeeze=False)
+    flat = [a for row in axes for a in row]
+    for i, (concept, source) in enumerate(tasks):
+        ax = flat[i]
+        for (arch, scale) in archscales:
+            agg = _seed_aggregate_vs_valloss(curves, valloss, concept, source, arch, scale)
+            if agg is None:
+                continue
+            grid, mean, std = agg
+            ax.plot(grid, mean, color=_COLOR.get(arch, "0.3"), ls=_LS.get(scale, "-"),
+                    lw=1.6, label=f"{arch}-{scale}")
+            ax.fill_between(grid, mean - std, mean + std, color=_COLOR.get(arch, "0.3"),
+                            alpha=0.16, lw=0)
+            drew = True
+        ax.invert_xaxis()            # training progresses as val loss falls
+        ax.set_xlabel("validation loss")
+        if i == 0:
+            ax.set_ylabel("Δ  (learned − baseline)")
+        ax.set_title(f"{concept} / {source}")
+        ax.grid(True, color="0.93", lw=0.6)
+        ax.text(-0.16, 1.04, "abcdefgh"[i], transform=ax.transAxes, fontsize=10, fontweight="bold")
+        ax.legend(frameon=False, fontsize=6)
+    if drew:
+        for ax in flat[len(tasks):]:
+            ax.set_visible(False)
+        _save(fig, out)
+    else:
+        plt.close(fig)
+
+
+def fig_vs_valloss_seeds(curves, valloss: Dict[tuple, float], out: Path) -> None:
+    """Family 2 SUPPLEMENT: per-seed Δ vs validation loss (the lines behind the band)."""
     if not valloss:
         return
     _style()
@@ -172,7 +245,7 @@ def fig_vs_valloss(curves, valloss: Dict[tuple, float], out: Path) -> None:
                 ax.plot([p[0] for p in pts], [p[1] for p in pts], color=_COLOR.get(arch, "0.3"),
                         ls=_LS.get(scale, "-"), lw=1.0, alpha=0.7)
                 drew = True
-        ax.invert_xaxis()            # training progresses as val loss falls
+        ax.invert_xaxis()
         ax.set_xlabel("validation loss")
         if i == 0:
             ax.set_ylabel("Δ  (learned − baseline)")
@@ -278,6 +351,7 @@ def main() -> int:
     valloss = load_val_loss_csv(args.results_dir)
     fig_vs_step(curves, Path(f"{args.out}_vs_step"))
     fig_vs_valloss(curves, valloss, Path(f"{args.out}_vs_valloss"))
+    fig_vs_valloss_seeds(curves, valloss, Path(f"{args.out}_vs_valloss_seeds"))
     fig_layer_heatmaps(sidecars, Path(f"{args.out}_heatmaps"))
     fig_emergence_times(curves, metric, Path(f"{args.out}_times"))
     return 0

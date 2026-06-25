@@ -65,8 +65,9 @@ def test_plot_emergence_smoke(tmp_path):
 
     out = tmp_path / "fig" / "emergence"
     pe.fig_vs_step(curves, Path(f"{out}_vs_step"))
-    pe.fig_vs_valloss(curves, valloss, Path(f"{out}_vs_valloss"))
+    pe.fig_vs_valloss(curves, valloss, Path(f"{out}_vs_valloss"))                  # aggregated main
+    pe.fig_vs_valloss_seeds(curves, valloss, Path(f"{out}_vs_valloss_seeds"))      # per-seed supp.
     pe.fig_layer_heatmaps(pe.load_sidecars(results), Path(f"{out}_heatmaps"))
     pe.fig_emergence_times(curves, metric, Path(f"{out}_times"))
-    for suffix in ("_vs_step", "_vs_valloss", "_heatmaps", "_times"):
+    for suffix in ("_vs_step", "_vs_valloss", "_vs_valloss_seeds", "_heatmaps", "_times"):
         assert (tmp_path / "fig" / f"emergence{suffix}.png").exists(), suffix
