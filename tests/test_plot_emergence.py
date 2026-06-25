@@ -22,7 +22,7 @@ def _synthesize(results_dir: Path) -> None:
     results_dir.mkdir(parents=True)
     # probe deltas (best-by-val per checkpoint): gpt2 > mamba, both rising
     rows = []
-    for arch, base in [("gpt2", 0.0), ("mamba", -0.02)]:
+    for arch, base in [("gpt2", 0.0), ("mamba", -0.02), ("esm2", -0.04)]:
         for seed in (0, 1):
             for k, st in enumerate(STEPS):
                 delta = base + 0.05 * k + 0.005 * seed
@@ -47,7 +47,7 @@ def _synthesize(results_dir: Path) -> None:
     with open(results_dir / "val_loss.csv", "w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["arch", "scale", "seed", "step", "val_loss", "val_bpr", "train_residues"])
-        for arch in ("gpt2", "mamba"):
+        for arch in ("gpt2", "mamba", "esm2"):
             for seed in (0, 1):
                 for k, st in enumerate(STEPS):
                     vl = 5.0 - 0.4 * k
@@ -60,6 +60,7 @@ def test_plot_emergence_smoke(tmp_path):
 
     curves, metric = load_curves(results)
     assert curves
+    assert any(k[2] == "esm2" for k in curves)           # esm2 present -> exercises the AR-only filter
     valloss = pe.load_val_loss_csv(results)
     assert valloss                                       # matched-loss join is populated
 

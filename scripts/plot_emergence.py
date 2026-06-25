@@ -44,6 +44,9 @@ _COLOR = {"gpt2": "#1f4e79", "mamba": "#b5471f", "esm2": "#3f7f3f"}
 _LS = {"XS": ":", "S": "--", "M": "-", "L": "-."}
 _ARCHES = ["gpt2", "mamba", "esm2"]
 _SCALES = ["XS", "S", "M", "L"]
+_AR_ARCHS = ("gpt2", "mamba")    # matched-loss panels: esm2's masked-CE loss is NOT
+#                                  comparable to AR bpr, so esm2 is excluded from the
+#                                  Δ-vs-val_loss axis (it stays in the step/emergence views).
 _SRC_ORDER = {"netsurfp": 0, "swissprot": 1, "dssp": 2}
 _CONCEPT_ORDER = {"ss3": 0, "ss8": 1, "rsa": 2}
 
@@ -185,7 +188,7 @@ def fig_vs_valloss(curves, valloss: Dict[tuple, float], out: Path) -> None:
         return
     _style()
     tasks = _tasks(curves)
-    archscales = sorted({(a, sc) for (_c, _s, a, sc, _seed) in curves},
+    archscales = sorted({(a, sc) for (_c, _s, a, sc, _seed) in curves if a in _AR_ARCHS},
                         key=lambda t: (_ARCHES.index(t[0]) if t[0] in _ARCHES else 9,
                                        _SCALES.index(t[1]) if t[1] in _SCALES else 9))
     drew = False
@@ -237,7 +240,7 @@ def fig_vs_valloss_seeds(curves, valloss: Dict[tuple, float], out: Path) -> None
     for i, (concept, source) in enumerate(tasks):
         ax = flat[i]
         for (c, s, arch, scale, seed), curve in curves.items():
-            if (c, s) != (concept, source):
+            if (c, s) != (concept, source) or arch not in _AR_ARCHS:
                 continue
             pts = sorted((valloss[(arch, scale, seed, st)], d) for st, d in curve
                          if (arch, scale, seed, st) in valloss)
