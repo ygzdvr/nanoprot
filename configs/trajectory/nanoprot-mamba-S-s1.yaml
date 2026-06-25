@@ -43,13 +43,14 @@ training:
   precision: bf16
   flash_attention: true
 eval:
-  eval_every: 250
-  eval_tokens: 41943040
+  eval_every: 25
+  eval_tokens: 4194304
   metric: bpr
 logging:
   run_name: mamba-S-s1
   wandb_project: nanoprot
   wandb_mode: offline
+  history: true
 checkpointing:
   output_dir: ${NANOPROT_BASE_DIR}/release_traj/nanoprot-mamba-S-s1
   save_every: -1

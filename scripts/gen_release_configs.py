@@ -130,8 +130,9 @@ def _log_spaced_steps(n_iter_est: int, k: int) -> List[int]:
 
 
 def _build_config_dict(arch: str, scale: str, seed: int, *, intermediate: bool,
-                       n_intermediate: int = N_INTERMEDIATE,
-                       ckpt_root: str = "release") -> Dict[str, Any]:
+                       n_intermediate: int = N_INTERMEDIATE, ckpt_root: str = "release",
+                       full_logging: bool = False, eval_every: int = 250,
+                       eval_tokens_mult: int = 80) -> Dict[str, Any]:
     g = GRID[arch][scale]
     objective = ARCH_OBJECTIVE[arch]
     name = f"nanoprot-{arch}-{scale}-s{seed}"
@@ -187,11 +188,13 @@ def _build_config_dict(arch: str, scale: str, seed: int, *, intermediate: bool,
         ),
         optimizer=dict(name="muon_adamw", weight_decay=WEIGHT_DECAY, **BASE_LRS),
         training=training,
-        eval=dict(eval_every=250, eval_tokens=EVAL_TOKENS, metric="bpr"),
+        eval=dict(eval_every=eval_every, eval_tokens=eval_tokens_mult * TOTAL_BATCH_SIZE,
+                  metric="bpr"),
         logging=dict(
             run_name=f"{arch}-{scale}-s{seed}",
             wandb_project="nanoprot",
             wandb_mode="offline",
+            history=full_logging,   # per-eval val_loss -> history.jsonl (matched-loss curves)
         ),
         checkpointing=dict(
             output_dir=f"${{NANOPROT_BASE_DIR}}/{ckpt_root}/{name}",
@@ -254,6 +257,15 @@ def main() -> int:
                     help="Checkpoint dir prefix under NANOPROT_BASE_DIR. Use e.g. release_traj "
                          "for the trajectory re-train so the released release/ ckpts aren't clobbered.")
     ap.add_argument("--skip-calib", action="store_true", help="Do not emit calibration probes.")
+    ap.add_argument("--full-logging", action="store_true",
+                    help="Write per-step/per-eval history.jsonl (val_loss curve) — needed for "
+                         "the trajectory matched-loss figure.")
+    ap.add_argument("--eval-every", type=int, default=250,
+                    help="Eval interval in steps (use a smaller value for trajectory runs so "
+                         "val_loss is sampled densely enough to align with checkpoints).")
+    ap.add_argument("--eval-tokens-mult", type=int, default=80,
+                    help="eval_tokens = this x total_batch_size (use ~8 for cheap frequent "
+                         "trajectory evals; default 80 = ~42M residues).")
     ap.add_argument("--force", action="store_true", help="Overwrite existing configs.")
     args = ap.parse_args()
 
@@ -272,7 +284,10 @@ def main() -> int:
             for seed in args.seeds:
                 cfg_dict = _build_config_dict(arch, scale, seed, intermediate=args.intermediate,
                                               n_intermediate=args.n_intermediate,
-                                              ckpt_root=args.ckpt_root)
+                                              ckpt_root=args.ckpt_root,
+                                              full_logging=args.full_logging,
+                                              eval_every=args.eval_every,
+                                              eval_tokens_mult=args.eval_tokens_mult)
                 validated = _validate(cfg_dict)            # raises on schema error
                 est = validated.estimate_params()
                 n_iter = int(PARAM_DATA_RATIO * est // TOTAL_BATCH_SIZE)
