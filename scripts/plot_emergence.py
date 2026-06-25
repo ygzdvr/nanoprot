@@ -90,40 +90,18 @@ def load_sidecars(results_dir: Path) -> List[dict]:
     return out
 
 
-def load_val_loss(traj_root: Path, arch: str, scale: str, seed: int) -> List[Tuple[int, float]]:
-    """[(step, val_loss)] from a run's history.jsonl eval rows (for matched-loss)."""
-    hist = traj_root / f"nanoprot-{arch}-{scale}-s{seed}" / "history.jsonl"
-    if not hist.exists():
-        return []
-    out = []
-    for line in hist.read_text().splitlines():
-        try:
-            r = json.loads(line)
-        except Exception:
-            continue
-        if r.get("type") == "eval" and r.get("val_loss") is not None and "step" in r:
-            out.append((int(r["step"]), float(r["val_loss"])))
-    return sorted(out)
+def load_val_loss_csv(results_dir: Path) -> Dict[tuple, float]:
+    """(arch, scale, seed, step) -> val_loss, from posthoc_val_loss_eval's val_loss.csv.
 
-
-def _interp_val_loss(curve_steps: List[int], val_curve: List[Tuple[int, float]]) -> Dict[int, float]:
-    """Linear-interpolate val_loss at each probe step from the (sparser) eval curve."""
-    if not val_curve:
-        return {}
-    xs = [s for s, _ in val_curve]
-    ys = [v for _, v in val_curve]
-    out: Dict[int, float] = {}
-    for s in curve_steps:
-        if s <= xs[0]:
-            out[s] = ys[0]
-        elif s >= xs[-1]:
-            out[s] = ys[-1]
-        else:
-            for i in range(1, len(xs)):
-                if xs[i] >= s:
-                    f = (s - xs[i - 1]) / (xs[i] - xs[i - 1])
-                    out[s] = ys[i - 1] + f * (ys[i] - ys[i - 1])
-                    break
+    Exact per-checkpoint val_loss (the post-hoc eval scores every saved step), so the
+    matched-loss panel joins by step with no interpolation.
+    """
+    out: Dict[tuple, float] = {}
+    p = Path(results_dir) / "val_loss.csv"
+    if not p.exists():
+        return out
+    for r in csv.DictReader(open(p)):
+        out[(r["arch"], r["scale"], r["seed"], int(r["step"]))] = float(r["val_loss"])
     return out
 
 
@@ -166,9 +144,14 @@ def fig_vs_step(curves, out: Path) -> None:
     _save(fig, out)
 
 
-def fig_vs_valloss(curves, traj_root: Optional[Path], out: Path) -> None:
-    """Family 2 (matched-loss): Delta vs validation loss, per task. Needs history.jsonl."""
-    if traj_root is None:
+def fig_vs_valloss(curves, valloss: Dict[tuple, float], out: Path) -> None:
+    """Family 2 (matched-loss): Delta vs validation loss, exact per-checkpoint join.
+
+    The decisive figure: at the SAME validation loss, does gpt2 expose more decodable
+    structure than mamba (representational inductive bias), or do the curves overlap
+    (a pure optimization-speed difference)?
+    """
+    if not valloss:
         return
     _style()
     tasks = _tasks(curves)
@@ -183,8 +166,8 @@ def fig_vs_valloss(curves, traj_root: Optional[Path], out: Path) -> None:
         for (c, s, arch, scale, seed), curve in curves.items():
             if (c, s) != (concept, source):
                 continue
-            vl = _interp_val_loss([st for st, _ in curve], load_val_loss(traj_root, arch, scale, int(seed)))
-            pts = sorted((vl[st], d) for st, d in curve if st in vl)
+            pts = sorted((valloss[(arch, scale, seed, st)], d) for st, d in curve
+                         if (arch, scale, seed, st) in valloss)
             if pts:
                 ax.plot([p[0] for p in pts], [p[1] for p in pts], color=_COLOR.get(arch, "0.3"),
                         ls=_LS.get(scale, "-"), lw=1.0, alpha=0.7)
@@ -284,8 +267,6 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--results-dir", type=Path, required=True,
                     help="trajectory_results dir (run_trajectory_probes CSVs + traj_*.json).")
-    ap.add_argument("--traj-root", type=Path, default=None,
-                    help="release_traj/ root (for history.jsonl matched-loss panel).")
     ap.add_argument("--out", type=Path, default=Path("docs/figures/emergence"))
     args = ap.parse_args()
 
@@ -294,8 +275,9 @@ def main() -> int:
         print(f"No trajectory CSVs in {args.results_dir}")
         return 0
     sidecars = load_sidecars(args.results_dir)
+    valloss = load_val_loss_csv(args.results_dir)
     fig_vs_step(curves, Path(f"{args.out}_vs_step"))
-    fig_vs_valloss(curves, args.traj_root, Path(f"{args.out}_vs_valloss"))
+    fig_vs_valloss(curves, valloss, Path(f"{args.out}_vs_valloss"))
     fig_layer_heatmaps(sidecars, Path(f"{args.out}_heatmaps"))
     fig_emergence_times(curves, metric, Path(f"{args.out}_times"))
     return 0

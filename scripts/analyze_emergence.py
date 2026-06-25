@@ -96,7 +96,10 @@ def load_curves(results_dir: Path) -> Dict[tuple, List[Tuple[int, float]]]:
     curves: Dict[tuple, List[Tuple[int, float]]] = defaultdict(list)
     metric: Dict[tuple, str] = {}
     for f in sorted(glob.glob(str(results_dir / "*.csv"))):
-        for r in csv.DictReader(open(f)):
+        reader = csv.DictReader(open(f))
+        if not reader.fieldnames or "concept" not in reader.fieldnames:
+            continue   # skip non-probe CSVs in the same dir (e.g. val_loss.csv)
+        for r in reader:
             key = (r["concept"], r["source"], r["arch"], r["scale"], r["seed"])
             curves[key].append((int(r["step"]), float(r["delta"])))
             metric[(r["concept"], r["source"])] = r.get("metric", "macro_f1")
