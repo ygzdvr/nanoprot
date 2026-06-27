@@ -56,7 +56,15 @@ MAX_RESIDUES="${MAX_RESIDUES:-100000}"
 # Core local-structure tasks probed at every checkpoint (the first emergence wave).
 TASKS="${TASKS:-ss3_netsurfp ss8_netsurfp rsa_netsurfp}"
 
-mapfile -t MODELS < <(ls -d "$NANOPROT_BASE_DIR"/release_traj/nanoprot-*-s* 2>/dev/null | sort)
+# Optional MODEL_FILTER (a grep -E pattern) restricts WHICH trajectory models this run probes.
+# The results CSVs are append-only with NO dedup, so re-probing an already-done model duplicates
+# its rows. Use MODEL_FILTER to probe only a new wave, e.g.:
+#   MODEL_FILTER='(-L-s[0-9]|-esm2-M-s[0-9])'  -> only the L + esm2 models (skip done S/M).
+if [ -n "${MODEL_FILTER:-}" ]; then
+    mapfile -t MODELS < <(ls -d "$NANOPROT_BASE_DIR"/release_traj/nanoprot-*-s* 2>/dev/null | sort | grep -E "$MODEL_FILTER")
+else
+    mapfile -t MODELS < <(ls -d "$NANOPROT_BASE_DIR"/release_traj/nanoprot-*-s* 2>/dev/null | sort)
+fi
 N=${#MODELS[@]}
 if [ "$N" -eq 0 ]; then
     echo "ERROR: no trajectory models at $NANOPROT_BASE_DIR/release_traj/ — run train_trajectory.slurm first." >&2
