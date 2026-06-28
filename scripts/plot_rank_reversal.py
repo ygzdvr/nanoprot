@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from rank_reversal import load_meta, load_task_curves, interp  # noqa: E402
 
 TASKS = ["val_bpr", "ss8", "ss3", "active", "rsa"]   # reversing + non-reversing for contrast
-SCALE_COLOR = {"S": "#4C72B0", "M": "#C44E52"}
+SCALE_COLOR = {"S": "#4C72B0", "M": "#C44E52", "L": "#55A868"}
 
 
 def delta_grid(curves, scale, n=60):
@@ -60,7 +60,7 @@ def main() -> int:
     axes = axes[0]
     for i, (ax, task) in enumerate(zip(axes, present)):
         ymin = 0.0
-        for scale in ("S", "M"):
+        for scale in ("S", "M", "L"):
             dg = delta_grid(tasks[task], scale)
             if not dg:
                 continue
@@ -78,7 +78,9 @@ def main() -> int:
         ax.text(-0.08, 1.03, chr(97 + i), transform=ax.transAxes, fontweight="bold", fontsize=10)
         ax.margins(x=0.02)
     axes[0].set_ylabel("Δ = gpt2 − mamba  (>0 ⇒ gpt2 ahead)")
-    axes[0].legend(title="scale", frameon=False, fontsize=7, loc="best")
+    from matplotlib.lines import Line2D
+    handles = [Line2D([0], [0], color=SCALE_COLOR[s], lw=1.7, label=s) for s in ("S", "M", "L")]
+    axes[0].legend(handles=handles, title="scale", frameon=False, fontsize=7, loc="best")
     fig.tight_layout()
     a.out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(str(a.out) + ".png", dpi=200, bbox_inches="tight")
