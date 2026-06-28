@@ -36,7 +36,9 @@ The early-proxy rank reversal is (i) a **biological-capability** phenomenon, not
   mamba>gpt2 sits inside the window at M but past it at L).
 - **Loss does NOT reverse** (val_bpr crossover <0.6%, a step-1 transient; gpt2 monotone-ahead at
   every practical budget). The naive *loss* proxy gives no warning; the early *capability* probe
-  actively mis-ranks. Robust to the mamba replicated-slice ~0.02 bpr offset (probe metrics ignore it).
+  actively mis-ranks. The mamba replicated-slice ~0.02 bpr offset inflates mamba's decodability
+  throughout, so the convergence gpt2-win is a *conservative lower bound* — the reversal holds
+  despite the slice favoring mamba (see `converged_decodability.md`).
 - rsa, disorder do not reverse. active is **marginal/near-tied** (Δ_final≈0.006 at L) — report as
   weak, not a clean reversal.
 
