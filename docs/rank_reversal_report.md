@@ -49,6 +49,15 @@ dependent** — the mis-ranking window is widest at small/mid scale and narrows 
 This quantitatively motivates the forecasting model (P3.3/P3.4): you cannot read the converged
 capability ranking from an early snapshot, and how-early-is-safe itself scales.
 
+## Per-seed robustness (addresses the n=3 concern)
+The headline reversal is **not** a seed-mean artifact: *every individual seed reverses*. For ss8 and
+ss3 at both S and M, all **3/3 seeds** individually show the state-space model ahead at the 1%
+calibration budget and attention ahead at convergence (per-seed Δ@1% from −0.003 to −0.052,
+Δ_final +0.011 to +0.040). At L, **0/3** seeds reverse at the 1% budget — the window has closed
+below 1% (consistent with the scaling-law of the window). rsa and disorder: 0/3 (no reversal);
+active: 2/3 at M and L (marginal). So the ss3/ss8 reversal at S/M is **per-seed unanimous** — the
+strongest statement available at n=3, independent of the bootstrap.
+
 ## Caveats / deferred (not silently dropped)
 - v1 uncertainty = **seed bootstrap (n=3)**; per-cluster block bootstrap (`--dump-cluster-scores`
   re-probe) is the submission-grade upgrade.
