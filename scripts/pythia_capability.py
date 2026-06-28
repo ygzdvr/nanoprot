@@ -84,12 +84,20 @@ def main() -> int:
     args.out.parent.mkdir(parents=True, exist_ok=True)
     is_new = not args.out.exists()
     cols = ["arch", "scale", "seed", "step", "n_params", "tokens", "flops", "lambada_acc", "loss", "n_eval"]
+    done = set()
+    if not is_new:
+        with open(args.out) as fr:
+            for r in csv.DictReader(fr):
+                try: done.add((r["scale"], int(r["step"])))
+                except (KeyError, ValueError): pass
     with open(args.out, "a", newline="") as f:
         w = csv.DictWriter(f, fieldnames=cols)
         if is_new:
             w.writeheader()
         for size in args.sizes:
             for step in args.steps:
+                if (size, step) in done:
+                    print(f"  pythia-{size} step{step:>6}: cached, skip"); continue
                 try:
                     r = eval_checkpoint(size, step, examples, args.device, dtype)
                 except Exception as e:
