@@ -35,6 +35,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+import numpy as np
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.prepare_genome import iter_fasta_records, _clean, _MAIN_CHROM_RE  # noqa: E402 (validated)
 
@@ -165,14 +167,19 @@ def main() -> int:
         if args.max_windows_per_split and per_split[sp] >= args.max_windows_per_split:
             continue
         ex = exons.get(chrom, [])
+        # Per-chromosome exon bitmask, built ONCE: O(genome). Replaces an O(windows x n_exons)
+        # per-window rescan that is pathological on large chromosomes (chr1 ~200k exons -> hours).
+        ex_mask = np.zeros(len(seq), dtype=np.uint8)
+        for es, ee in ex:
+            if ee > 0 and es < len(seq):
+                ex_mask[max(0, es):min(len(seq), ee)] = 1
         for gs, ge in sorted(genes.get(chrom, [])):
             for w0 in range(gs, ge - win + 1, stride):
                 dna = _clean(seq[w0:w0 + win])
                 if dna.count("N") / win > args.max_n_frac:
                     dropped_n += 1
                     continue
-                overlap = [(es, ee) for es, ee in ex if ee > w0 and es < w0 + win]
-                labels = _exon_labels(w0, win, overlap)
+                labels = ex_mask[w0:w0 + win].tolist()
                 records.append({"id": f"{chrom}:{w0}-{w0+win}", "sequence": dna,
                                 "labels": labels, "split": sp})
                 per_split[sp] += 1
