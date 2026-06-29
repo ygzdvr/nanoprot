@@ -27,7 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from nanoprot.eval.probe.cluster import assign_splits_clustered  # noqa: E402
+from nanoprot.eval.probe.cluster import _hash_unit, cluster_sequences  # noqa: E402
 from nanoprot.eval.probe.labels import assign_splits  # noqa: E402
 from scripts.prepare_probe_data import write_cache  # noqa: E402
 
@@ -91,36 +91,62 @@ def main() -> int:
     lab1 = {r["accession"]: fam_idx[next(iter({f for f in r["pfam_ids"] if f in topk_set}))]
             for r in sampled}
 
-    fracs = (1 - 2 * args.val_frac, args.val_frac, args.val_frac)
-    splits = None
+    # Stratified-WITHIN-family homology-safe split: cluster globally (homologs share a cluster), then
+    # assign EACH family's clusters ~(1-2v)/v/v across train/val/test, so every kept family spans all
+    # three splits. (A plain global cluster split dumps a family's clusters into one split -> per-class
+    # imbalance, e.g. ~1 test example.) Whole clusters stay in one split, so no homolog straddles the
+    # boundary. Families with <3 clusters cannot be 3-way split and are dropped.
+    fam_of = {r["accession"]: lab1[r["accession"]] for r in sampled}
+    m2r = None
     if args.cluster_split:
         try:
-            splits = assign_splits_clustered(ids, seqs, fracs=fracs, seed=args.seed,
-                                             min_seq_id=args.min_seq_id)
+            m2r = cluster_sequences(ids, seqs, min_seq_id=args.min_seq_id)
         except FileNotFoundError as e:
             print(f"  WARNING: {e}\n  -> per-protein hash split (NOT homology-safe).")
-    if splits is None:
+    splits: dict = {}
+    keep: set = set()
+    if m2r is not None:
+        fam_reps: dict = defaultdict(set)
+        for pid in ids:
+            fam_reps[fam_of[pid]].add(m2r[pid])
+        rep_split: dict = {}
+        for fam, reps in fam_reps.items():
+            reps = sorted(reps, key=lambda rr: _hash_unit(f"{args.seed}:{fam}:{rr}"))
+            n = len(reps)
+            n_test = max(1, round(args.val_frac * n))
+            n_val = max(1, round(args.val_frac * n))
+            n_train = n - n_test - n_val
+            if n < 3 or n_train < 1:
+                continue                          # too few clusters to 3-way split this family
+            for i, rr in enumerate(reps):
+                rep_split[(fam, rr)] = ("train" if i < n_train
+                                        else "val" if i < n_train + n_val else "test")
+            keep.add(fam)
+        for pid in ids:
+            s = rep_split.get((fam_of[pid], m2r[pid]))
+            if s is not None:
+                splits[pid] = s
+    else:
+        fracs = (1 - 2 * args.val_frac, args.val_frac, args.val_frac)
         splits = assign_splits(ids, fracs=fracs, seed=args.seed)
+        by: dict = defaultdict(Counter)
+        for pid in ids:
+            by[fam_of[pid]][splits[pid]] += 1
+        keep = {f for f in by if by[f]["train"] and by[f]["test"]}
 
-    # VERIFY each family appears in train AND test; drop + re-index survivors.
-    by_fam_split: dict = defaultdict(Counter)
-    for r in sampled:
-        by_fam_split[lab1[r["accession"]]][splits[r["accession"]]] += 1
-    keep = {fi for fi in range(len(topk))
-            if by_fam_split[fi]["train"] > 0 and by_fam_split[fi]["test"] > 0}
     dropped = [topk[fi] for fi in range(len(topk)) if fi not in keep]
     if dropped:
-        print(f"  DROPPED {len(dropped)} families absent from train or test: {dropped}")
+        print(f"  DROPPED {len(dropped)} families (<3 clusters / not in all splits): {dropped}")
     kept_sorted = sorted(keep)
     reidx = {old: new for new, old in enumerate(kept_sorted)}
     class_names = [topk[fi] for fi in kept_sorted]
     n_classes = len(kept_sorted)
     if n_classes < 2:
-        raise SystemExit(f"only {n_classes} family survived the train+test check — loosen --min-seq-id or raise --max-per-family")
+        raise SystemExit(f"only {n_classes} families survived — loosen --min-seq-id / --min-kept")
 
     proteins = [{"id": r["accession"], "sequence": r["sequence"],
                  "labels": [reidx[lab1[r["accession"]]]], "split": splits[r["accession"]]}
-                for r in sampled if lab1[r["accession"]] in keep]
+                for r in sampled if lab1[r["accession"]] in keep and r["accession"] in splits]
 
     counts = Counter(p["split"] for p in proteins)
     prov = {"source": f"Swiss-Prot Pfam ({args.pkl.name})", "concept": "pfam_family",
