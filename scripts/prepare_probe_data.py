@@ -136,12 +136,13 @@ def load_npz(path: Path) -> Tuple[np.ndarray, Optional[np.ndarray]]:
 
 def write_cache(out_dir: Path, proteins: List[dict], provenance: dict, source: str, *,
                 concept: str = "ss3", task: str = "classification", n_classes: int = 3,
-                class_names: Optional[list] = None, ignore_index: int = -100) -> None:
+                class_names: Optional[list] = None, ignore_index: int = -100,
+                level: str = "residue") -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "meta.json").write_text(json.dumps({
         "concept": concept, "source": source, "task": task, "n_classes": n_classes,
         "class_names": class_names if class_names is not None else SS3_NAMES,
-        "ignore_index": ignore_index, "provenance": provenance,
+        "ignore_index": ignore_index, "level": level, "provenance": provenance,
     }, indent=2))
     with (out_dir / "data.jsonl").open("w", encoding="utf-8") as fh:
         for p in proteins:
