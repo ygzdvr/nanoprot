@@ -30,9 +30,11 @@
 #SBATCH --mem=128G
 #SBATCH --gres=gpu:2
 #SBATCH --time=06:00:00
-#SBATCH --partition=ailab
+# Partition/QOS at SUBMIT (so the suite can dodge a full ailab cap; FA3/SDPA auto-detects by arch):
+#   ailab/h200/FA3:  sbatch --partition=ailab runs/genome_train.slurm
+#   a100/SDPA (gpu): sbatch --qos=gpu-short --account=ehazan runs/genome_train.slurm  (escapes ailab cap; 6h<1d gpu-short wall)
 #SBATCH --array=0-11%6
-# --time>=02:00:00 keeps the array on gpu-short (not the 25-task gpu-test pool).
+# --time>=02:00:00 keeps the array off the 25-task gpu-test pool.
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=hd0216@princeton.edu
 

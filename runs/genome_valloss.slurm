@@ -19,7 +19,8 @@
 #SBATCH --mem=128G
 #SBATCH --gres=gpu:1
 #SBATCH --time=04:00:00
-#SBATCH --partition=ailab
+# Partition/QOS at SUBMIT (a100/SDPA escapes a full ailab cap): sbatch --qos=gpu-short --account=ehazan ...
+# or ailab/h200: sbatch --partition=ailab ...  (FA3/SDPA auto-detects by arch)
 #SBATCH --array=0-11%6
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=hd0216@princeton.edu
