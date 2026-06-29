@@ -13,7 +13,8 @@
 #
 # Submit:  mkdir -p logs && sbatch runs/genome_probe.slurm
 # Then:    python -m scripts.rank_reversal  --results-dir $NANOPROT_BASE_DIR/trajectory_results_genome
-#          python -m scripts.forecast_protocol --results-dir $NANOPROT_BASE_DIR/trajectory_results_genome
+#          python -m scripts.forecast_protocol --results-dir $NANOPROT_BASE_DIR/trajectory_results_genome \
+#              --concepts exon     # genome has the single 'exon' concept (forecast_protocol defaults to the protein 5)
 # =============================================================================
 #SBATCH --job-name=nanoprot-genprobe
 #SBATCH --output=logs/%A_%a.%x.out

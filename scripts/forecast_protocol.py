@@ -174,7 +174,12 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--results-dir", type=Path, default=Path(".cache/nanoprot/trajectory_results"))
     ap.add_argument("--out", type=Path, default=Path("docs/forecast_protocol_report.md"))
+    ap.add_argument("--concepts", nargs="+", default=None,
+                    help="Concepts to evaluate (default: the protein 5; for B-GEN/genome use --concepts exon).")
     a = ap.parse_args()
+    global CONCEPTS
+    if a.concepts:
+        CONCEPTS = a.concepts
     cells = load_cells(a.results_dir); keys = sorted(cells); rng = np.random.default_rng(0)
 
     vpred = {(m, f): [(c, float(value_pred(cells, c, f, m)), cells[c]["dfin"]) for c in keys]
