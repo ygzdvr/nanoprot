@@ -19,7 +19,10 @@
 #SBATCH --mem=64G
 #SBATCH --gres=gpu:1
 #SBATCH --time=01:00:00
-#SBATCH --partition=ailab
+# Partition/QOS chosen at SUBMIT (not hardcoded), so the genome can dodge a full ailab cap:
+#   ailab/h200/FA3:  sbatch --partition=ailab runs/genome_smoke.slurm
+#   a100/SDPA (gpu): sbatch --qos=gpu-short --account=ehazan runs/genome_smoke.slurm   (escapes ailab cap)
+# FA3 vs SDPA auto-detects by GPU arch (sm90->FA3, sm80->SDPA); no manual flag needed.
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=hd0216@princeton.edu
 
