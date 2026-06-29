@@ -54,6 +54,8 @@ cd "$NANOPROT_REPO"
 
 MAX_RESIDUES="${MAX_RESIDUES:-100000}"
 # Core local-structure tasks probed at every checkpoint (the first emergence wave).
+# A-BREADTH (Nature breadth lever): add sequence-level concepts here — they auto-pool (run_trajectory_probes
+# detects level="sequence" and mean-pools residue reps). e.g.  TASKS="pfam_swissprot" sbatch runs/trajectory_probe.slurm
 TASKS="${TASKS:-ss3_netsurfp ss8_netsurfp rsa_netsurfp}"
 
 # Optional MODEL_FILTER (a grep -E pattern) restricts WHICH trajectory models this run probes.

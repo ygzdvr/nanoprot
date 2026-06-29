@@ -77,9 +77,10 @@ def delta_per_layer(learned: List[dict], baseline: List[dict], metric: str) -> L
 # ---------------------------------------------------------------------------
 
 def _features(model, dataset, tokenizer, *, max_residues, device) -> Dict[str, tuple]:
+    pool = dataset.level == "sequence"     # fold/family/fitness: mean-pool residue reps (A-BREADTH)
     return {sp: gather_features(model, dataset.split(sp), tokenizer, task=dataset.task,
                                 ignore_index=dataset.ignore_index, max_residues=max_residues,
-                                device=device)
+                                device=device, pool=pool)
             for sp in ("train", "val", "test")}
 
 
