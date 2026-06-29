@@ -38,6 +38,8 @@ def main() -> int:
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--top-k", type=int, default=20)
     ap.add_argument("--max-per-family", type=int, default=800)
+    ap.add_argument("--min-kept", type=int, default=100,
+                    help="drop families with fewer than this many clean single-label proteins")
     ap.add_argument("--min-len", type=int, default=20)
     ap.add_argument("--max-len", type=int, default=512, help="drop proteins longer than the model context")
     ap.add_argument("--val-frac", type=float, default=0.1)
@@ -70,6 +72,13 @@ def main() -> int:
         if len(hits) != 1:
             continue
         per_fam[next(iter(hits))].append(r)
+
+    # keep only families with enough clean single-label examples (avoid tiny, unlearnable classes)
+    topk = [f for f in topk if len(per_fam[f]) >= args.min_kept]
+    fam_idx = {f: i for i, f in enumerate(topk)}
+    if len(topk) < 2:
+        raise SystemExit(f"only {len(topk)} families with >= {args.min_kept} clean examples")
+    print(f"  {len(topk)} families with >= {args.min_kept} single-label proteins (of top-{args.top_k})")
 
     sampled = []
     for f in topk:
