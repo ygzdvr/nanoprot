@@ -46,7 +46,12 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--results-dir", type=Path, default=Path(".cache/nanoprot/trajectory_results"))
     ap.add_argument("--out", type=Path, default=Path("docs/figures/rank_reversal"))
+    ap.add_argument("--tasks", nargs="+", default=None,
+                    help="Tasks/concepts to plot (default: protein val_bpr+4; for genome use --tasks val_bpr exon).")
     a = ap.parse_args()
+    global TASKS
+    if a.tasks:
+        TASKS = a.tasks
 
     meta = load_meta(a.results_dir)
     tasks = load_task_curves(a.results_dir, meta)
