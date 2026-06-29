@@ -265,11 +265,12 @@ class TokenizerConfig(BaseModel):
 
     - ``bpe``  : Byte-Pair Encoding trained on UniRef50, V=50,256 (gpt2).
     - ``esm2`` : 33-token ESM-2 alphabet (20 AAs + special tokens) (esm2).
+    - ``genome`` : 10-token single-nucleotide DNA alphabet {A,C,G,T,N} + specials (B-GEN genomics).
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    name: Literal["bpe", "esm2"] = "bpe"
+    name: Literal["bpe", "esm2", "genome"] = "bpe"
     vocab_size: Optional[int] = Field(
         default=None,
         description="Tokenizer vocabulary size. If null, uses the tokenizer's default.",
@@ -287,7 +288,7 @@ class TokenizerConfig(BaseModel):
 class DataConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    dataset: Literal["uniref50"] = "uniref50"
+    dataset: Literal["uniref50", "hg38"] = "uniref50"
     shard_dir: str = Field(
         ...,
         description="Directory containing tokenized parquet shards. Supports $VAR.",

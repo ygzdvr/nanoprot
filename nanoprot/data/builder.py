@@ -39,6 +39,9 @@ def build_tokenizer(cfg: NanoprotConfig):
     if name == "esm2":
         from nanoprot.tokenizers.esm2 import get_esm2_tokenizer
         return get_esm2_tokenizer()
+    if name == "genome":
+        from nanoprot.tokenizers.genome import get_genome_tokenizer
+        return get_genome_tokenizer()
     raise ValueError(f"unknown tokenizer {name!r}")
 
 
