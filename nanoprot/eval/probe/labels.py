@@ -51,6 +51,7 @@ class ProbeDataset:
     proteins: List[ProbeProtein]
     ignore_index: int = DEFAULT_IGNORE_INDEX
     task: str = "classification"          # "classification" | "regression"
+    level: str = "residue"                # "residue" (per-position) | "sequence" (one label/protein, pooled)
     meta: dict = field(default_factory=dict)
 
     def split(self, name: str) -> List[ProbeProtein]:
@@ -71,6 +72,7 @@ def load_probe_dataset(path: Union[str, Path]) -> ProbeDataset:
     n_classes = int(meta["n_classes"])
     ignore = int(meta.get("ignore_index", DEFAULT_IGNORE_INDEX))
     task = meta.get("task", "classification")
+    level = meta.get("level", "residue")   # "residue" (per-position) | "sequence" (one label/protein, pooled)
 
     proteins: List[ProbeProtein] = []
     with (path / "data.jsonl").open("r", encoding="utf-8") as fh:
@@ -85,7 +87,13 @@ def load_probe_dataset(path: Union[str, Path]) -> ProbeDataset:
             else:
                 labels = list(d["labels"])
             p = ProbeProtein(d["id"], d["sequence"], labels, d["split"])
-            if len(p.sequence) != len(p.labels):
+            if level == "sequence":
+                # one label for the whole protein; reps are mean-pooled at probe time.
+                if len(p.labels) != 1:
+                    raise ValueError(
+                        f"protein {p.id}: sequence-level concept needs exactly 1 label, got {len(p.labels)}"
+                    )
+            elif len(p.sequence) != len(p.labels):
                 raise ValueError(
                     f"protein {p.id}: {len(p.sequence)} residues vs {len(p.labels)} labels"
                 )
@@ -99,7 +107,7 @@ def load_probe_dataset(path: Union[str, Path]) -> ProbeDataset:
     return ProbeDataset(
         concept=meta["concept"], source=meta["source"], n_classes=n_classes,
         class_names=list(meta["class_names"]), ignore_index=ignore, task=task,
-        proteins=proteins, meta=meta,
+        level=level, proteins=proteins, meta=meta,
     )
 
 

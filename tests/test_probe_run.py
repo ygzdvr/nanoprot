@@ -83,3 +83,40 @@ def test_run_probe_end_to_end_structure() -> None:
     # both sweeps probed every layer; best layer chosen on val
     assert len(out["learned"]["per_layer"]) == cfg.depth + 1
     assert len(out["baseline"]["per_layer"]) == cfg.depth + 1
+
+
+# --- sequence-level (pooled) probing: the A-BREADTH path (fold/family/fitness) -----------------
+
+def _seq_dataset():
+    """Sequence-level: ONE label per protein (level='sequence'), reps mean-pooled at probe time."""
+    seqs = ["MKTAYIAK", "GVSERTID", "PKQNFYMH", "WCLAGVSE", "RTIDPKQN", "FYMHWCLA", "AAAAKKKK", "LLLLDDDD"]
+    splits = ["train", "train", "train", "train", "val", "val", "test", "test"]
+    proteins = [ProbeProtein(f"s{i}", s, [i % 2], sp) for i, (s, sp) in enumerate(zip(seqs, splits))]
+    return ProbeDataset(concept="family", source="synthetic", n_classes=2,
+                        class_names=["a", "b"], proteins=proteins, level="sequence")
+
+
+@pytest.mark.slow
+def test_gather_features_pool_one_vector_per_protein() -> None:
+    m, cfg = _model()
+    ds = _seq_dataset()
+    X, y = gather_features(m, ds.split("train"), default_tokenizer(), device="cpu", pool=True)
+    n_train = len(ds.split("train"))
+    assert len(X) == n_probe_points(m) == cfg.depth + 1
+    assert int(y.shape[0]) == n_train                      # ONE pooled row per protein (not per residue)
+    for xl in X:
+        assert xl.shape == (n_train, cfg.d_model)          # (n_proteins, d)
+        assert xl.device.type == "cpu"
+
+
+@pytest.mark.slow
+def test_run_probe_sequence_level_pooling_end_to_end() -> None:
+    m, cfg = _model()
+    baseline = build_random_init(cfg, device="cpu")
+    out = run_probe(m, baseline, _seq_dataset(), device="cpu",
+                    fit_kw={"epochs": 50, "seed": 0, "device": "cpu"})       # level='sequence' -> pool=True
+    assert out["concept"] == "family"
+    assert 0 <= out["best_layer"] <= cfg.depth
+    assert 0.0 <= out["learned_test"] <= 1.0 and 0.0 <= out["baseline_test"] <= 1.0
+    assert out["learned_minus_baseline"] == pytest.approx(out["learned_test"] - out["baseline_test"])
+    assert len(out["learned"]["per_layer"]) == cfg.depth + 1

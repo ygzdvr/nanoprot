@@ -40,7 +40,7 @@ def build_random_init(model_cfg, device: str = "cpu"):
 def gather_features(model, proteins: Sequence[ProbeProtein], tokenizer=None, *,
                     task: str = "classification", add_bos: bool = True,
                     ignore_index: int = -100, max_residues: Optional[int] = None,
-                    device: Optional[str] = None) -> Tuple[List[torch.Tensor], torch.Tensor]:
+                    device: Optional[str] = None, pool: bool = False) -> Tuple[List[torch.Tensor], torch.Tensor]:
     """Residual-stream features at every layer for the labelled residues of ``proteins``.
 
     Streams one protein at a time; each protein's per-layer features are masked to the
@@ -59,6 +59,22 @@ def gather_features(model, proteins: Sequence[ProbeProtein], tokenizer=None, *,
     ys: List[torch.Tensor] = []
     total = 0
     for p in proteins:
+        if pool:
+            # sequence-level: mean-pool residue reps -> (1, d) per layer; one label per protein.
+            res_ids = tokenizer.encode(p.sequence)[0]
+            if not res_ids:
+                continue
+            ids = [tokenizer.get_bos_token_id(), *res_ids] if add_bos else list(res_ids)
+            idx = torch.tensor([ids], dtype=torch.long, device=device)
+            feats = extract_layers(model, idx)
+            start = 1 if add_bos else 0          # exclude the <cls>/bos position from the mean
+            for k, f in enumerate(feats):
+                chunks[k].append(f[0][start:].float().mean(dim=0, keepdim=True).cpu())  # (1, d)
+            ys.append(torch.tensor([p.labels[0]], dtype=label_dtype))
+            total += 1
+            if max_residues is not None and total >= max_residues:
+                break
+            continue
         ids, aligned = tokenize_and_align(
             p.sequence, p.labels, tokenizer, add_bos=add_bos, ignore_index=ignore_index)
         idx = torch.tensor([ids], dtype=torch.long, device=device)
@@ -122,9 +138,10 @@ def run_probe(model, baseline_model, dataset: ProbeDataset, tokenizer=None, *,
     if metric is None:
         metric = "r2" if task == "regression" else "macro_f1"
 
+    pool = dataset.level == "sequence"        # sequence-level concepts (fold/family/fitness) mean-pool reps
     def features_for(m):
         return {sp: gather_features(m, dataset.split(sp), tokenizer, task=task,
-                                    ignore_index=ig, max_residues=max_residues, device=device)
+                                    ignore_index=ig, max_residues=max_residues, device=device, pool=pool)
                 for sp in ("train", "val", "test")}
 
     learned = _sweep(features_for(model), n_classes, metric, fit_kw, task)
