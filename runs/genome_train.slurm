@@ -12,13 +12,12 @@
 #   1) configs:   python -m scripts.gen_genome_configs --out configs/genome --force
 #   2) hg38 shards at $NANOPROT_BASE_DIR/hg38_parquet  (scripts.prepare_genome; download hg38 on a
 #      LOGIN node first — compute nodes have no internet).
-#   3) SMOKE-TEST the genome tokenizer train path ONCE before the array (catches any data-loader/
-#      embedding bug at ~minutes, not at suite scale):
-#        OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=1 -m scripts.train -- \
-#          --config configs/genome/genome-gpt2-S-s0.yaml \
-#          --override training.total_residues=$((20*524288)) eval.eval_every=10 \
-#                     model.depth=4 model.max_seq_len=512
-#        # expect a SANE, DECREASING bits-per-base (init ~ log2(10) ≈ 3.32 bits).
+#   3) SMOKE-TEST the genome train path ONCE before the array (catches any data-loader/embedding bug
+#      at ~minutes, not at suite scale). train.py takes only --config, so use the dedicated short
+#      smoke config via its launcher:
+#        sbatch runs/genome_smoke.slurm        # runs configs/genome/_smoke/genome-smoke.yaml (~40 steps)
+#        # then inspect logs/<jid>.*.out for a SANE, DECREASING bits-per-residue (init ~ log2(10) ≈ 3.32).
+#      (The CPU forward+backward smoke already passed; this confirms the GPU FA3/bf16 path at scale.)
 #
 # Submit:  mkdir -p logs && sbatch runs/genome_train.slurm
 # =============================================================================

@@ -1,0 +1,56 @@
+# AUTO-GENERATED smoke config (from genome-gpt2-S-s0). ~40 steps to validate the GPU
+# train-path (FA3/bf16) + a DECREASING bits-per-residue (init ~ log2(10) = 3.32 bits)
+# BEFORE the 12-model suite. Not for the release run.
+
+name: genome-smoke
+seed: 0
+model:
+  arch: gpt2
+  depth: 9
+  d_model: 576
+  head_dim: 64
+  max_seq_len: 1024
+  vocab_size: 10
+  rope: true
+  qk_norm: true
+  mlp_activation: relu_squared
+  logit_softcap: 15.0
+  window_pattern: L
+tokenizer:
+  name: genome
+data:
+  dataset: hg38
+  shard_dir: ${NANOPROT_BASE_DIR}/hg38_parquet
+  packing: bos_aligned_best_fit
+  val_shard: last
+optimizer:
+  name: muon_adamw
+  weight_decay: 0.1
+  matrix_lr: 0.02
+  embedding_lr: 0.3
+  unembedding_lr: 0.008
+  scalar_lr: 0.5
+training:
+  objective: ar
+  total_residues: 20971520
+  param_data_ratio: 12
+  total_batch_size: 524288
+  device_batch_size: 32
+  warmup_steps: 40
+  warmdown_ratio: 0.65
+  final_lr_frac: 0.05
+  precision: bf16
+  flash_attention: true
+eval:
+  eval_every: 10
+  eval_tokens: 1048576
+  metric: bpr
+logging:
+  run_name: genome-smoke
+  wandb_project: nanoprot
+  wandb_mode: offline
+  history: true
+checkpointing:
+  output_dir: ${NANOPROT_BASE_DIR}/genome_smoke/genome-smoke
+  save_every: -1
+  save_steps: []
