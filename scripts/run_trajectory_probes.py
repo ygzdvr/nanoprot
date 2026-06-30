@@ -43,7 +43,9 @@ from nanoprot.eval.probe.linear import (  # noqa: E402
     evaluate_probe, evaluate_regression, fit_linear_probe, fit_linear_regression,
 )
 
-NAME_RE = re.compile(r"nanoprot-(?P<arch>gpt2|esm2|mamba)-(?P<scale>XS|S|M|L)-s(?P<seed>\d+)")
+# Accept both the protein (nanoprot-) and genome (genome-) model-dir prefixes so the arch/scale/seed
+# parse identically for B-GEN — else genome rows get arch="?" and rank_reversal's AR filter drops them.
+NAME_RE = re.compile(r"(?:nanoprot|genome)-(?P<arch>gpt2|esm2|mamba)-(?P<scale>XS|S|M|L)-s(?P<seed>\d+)")
 
 
 # ---------------------------------------------------------------------------

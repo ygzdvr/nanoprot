@@ -36,7 +36,9 @@ import torch  # noqa: E402
 from nanoprot.training.checkpoint import load_pretrained  # noqa: E402
 from nanoprot.data.builder import build_data_loader  # noqa: E402
 
-NAME_RE = re.compile(r"nanoprot-(?P<arch>gpt2|esm2|mamba)-(?P<scale>XS|S|M|L)-s(?P<seed>\d+)")
+# Accept both protein (nanoprot-) and genome (genome-) prefixes so genome val_bpr rows carry the real
+# arch/scale/seed (else arch="?" and rank_reversal drops them from the val_bpr half of the reversal).
+NAME_RE = re.compile(r"(?:nanoprot|genome)-(?P<arch>gpt2|esm2|mamba)-(?P<scale>XS|S|M|L)-s(?P<seed>\d+)")
 
 
 def list_checkpoint_steps(traj_dir: Path) -> List[int]:
