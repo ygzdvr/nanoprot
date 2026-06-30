@@ -15,6 +15,8 @@
 # Then:    python -m scripts.rank_reversal  --results-dir $NANOPROT_BASE_DIR/trajectory_results_genome
 #          python -m scripts.forecast_protocol --results-dir $NANOPROT_BASE_DIR/trajectory_results_genome \
 #              --concepts exon     # genome has the single 'exon' concept (forecast_protocol defaults to the protein 5)
+#          python -m scripts.plot_rank_reversal --results-dir $NANOPROT_BASE_DIR/trajectory_results_genome \
+#              --tasks val_bpr exon --out docs/figures/rank_reversal_genome   # figure defaults to protein tasks
 # =============================================================================
 #SBATCH --job-name=nanoprot-genprobe
 #SBATCH --output=logs/%A_%a.%x.out
