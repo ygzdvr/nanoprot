@@ -26,7 +26,7 @@
 #SBATCH --error=logs/%A_%a.%x.err
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=8
 #SBATCH --mem=128G
 # 1 GPU per model: the genome models are small (gpt2/mamba S/M, vocab 10) and the 1-GPU smoke trained
 # fine; 2-GPU DDP HUNG on the first distributed step (all models stuck at Step 0, no wandb log) — likely
