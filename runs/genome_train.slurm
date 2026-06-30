@@ -28,7 +28,10 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
-#SBATCH --gres=gpu:2
+# 1 GPU per model: the genome models are small (gpt2/mamba S/M, vocab 10) and the 1-GPU smoke trained
+# fine; 2-GPU DDP HUNG on the first distributed step (all models stuck at Step 0, no wandb log) — likely
+# the genome data-loader's per-rank split. Single-GPU avoids it and lets more models run concurrently.
+#SBATCH --gres=gpu:1
 #SBATCH --time=06:00:00
 # Partition/QOS at SUBMIT (so the suite can dodge a full ailab cap; FA3/SDPA auto-detects by arch):
 #   ailab/h200/FA3:  sbatch --partition=ailab runs/genome_train.slurm
@@ -42,7 +45,7 @@ set -euo pipefail
 
 NANOPROT_REPO="${NANOPROT_REPO:-/scratch/gpfs/EHAZAN/hd0216/Senior-Thesis/scaling/nanochat/NEW-REPO/nanochat/nanoprot}"
 NANOPROT_VENV="${NANOPROT_VENV:-/scratch/gpfs/EHAZAN/hd0216/Senior-Thesis/scaling/nanochat/NEW-REPO/nanochat/.venv}"
-NPROC="${NPROC:-2}"   # GPUs per task; must match --gres=gpu:N above
+NPROC="${NPROC:-1}"   # GPUs per task; must match --gres=gpu:N above (1 = no DDP; see header)
 CONFIG_DIR="${CONFIG_DIR:-$NANOPROT_REPO/configs/genome}"
 
 module purge
