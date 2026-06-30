@@ -47,8 +47,19 @@ _SCALES = ["XS", "S", "M", "L"]
 _AR_ARCHS = ("gpt2", "mamba")    # matched-loss panels: esm2's masked-CE loss is NOT
 #                                  comparable to AR bpr, so esm2 is excluded from the
 #                                  Δ-vs-val_loss axis (it stays in the step/emergence views).
-_SRC_ORDER = {"netsurfp": 0, "swissprot": 1, "dssp": 2}
-_CONCEPT_ORDER = {"ss3": 0, "ss8": 1, "rsa": 2}
+_SRC_ORDER = {"netsurfp": 0, "swissprot": 1, "dssp": 2, "cath": 3}
+# Panel order encodes the developmental hierarchy the emergence figure tells:
+# local per-residue STRUCTURE first (ss3..active), then the A-BREADTH higher-order
+# per-sequence concepts last (localization -> topology -> homology -> enzyme FUNCTION).
+# This is the "local-structure-first, higher-order-function-last" ordering claim; the
+# four breadth concepts (subcellular/fold/pfam_family/ec_class) sort after all local ones.
+_CONCEPT_ORDER = {
+    # local per-residue structure (emerge early)
+    "ss3": 0, "ss8": 1, "rsa": 2, "disorder": 3, "transmembrane": 4, "signal_peptide": 5,
+    "active": 6,  # per-residue but functional (transitional)
+    # higher-order per-sequence breadth axes (A-BREADTH; emerge later)
+    "subcellular": 7, "fold": 8, "pfam_family": 9, "ec_class": 10,
+}
 
 
 def _style():
@@ -62,7 +73,7 @@ def _style():
 
 def _tasks(curves) -> List[Tuple[str, str]]:
     ts = {(c, s) for (c, s, *_r) in curves}
-    return sorted(ts, key=lambda t: (_CONCEPT_ORDER.get(t[0], 9), _SRC_ORDER.get(t[1], 9)))
+    return sorted(ts, key=lambda t: (_CONCEPT_ORDER.get(t[0], 99), _SRC_ORDER.get(t[1], 99)))
 
 
 def _mean(xs):
