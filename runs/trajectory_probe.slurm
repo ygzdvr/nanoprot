@@ -23,7 +23,10 @@
 #SBATCH --mem=128G
 #SBATCH --gres=gpu:1
 #SBATCH --time=06:00:00
-#SBATCH --partition=ailab
+# Partition/QOS at SUBMIT (route-flexible, like the genome launchers) so probing can run on a100
+# WITHOUT competing with a genome suite on ailab:
+#   ailab/h200:  sbatch --partition=ailab runs/trajectory_probe.slurm
+#   a100 (gpu):  sbatch --qos=gpu-short --account=ehazan --array=0-20%8 runs/trajectory_probe.slurm
 #SBATCH --array=0-11%8
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=hd0216@princeton.edu
