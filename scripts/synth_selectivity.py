@@ -324,7 +324,7 @@ def main() -> int:
     c.add_argument("--target", type=float, default=0.80); c.add_argument("--seed", type=int, default=0)
     r = sub.add_parser("run")
     r.add_argument("--spec", type=Path, default=Path("docs/synth_task_spec.json"))
-    r.add_argument("--task", required=True); r.add_argument("--arch", required=True, choices=["attn", "ssm"])
+    r.add_argument("--task", required=True); r.add_argument("--arch", required=True, choices=["attn", "ssm", "mamba"])
     r.add_argument("--seed", type=int, default=0)
     r.add_argument("--out", type=Path, default=Path(".cache/nanoprot/synth_results/curves.csv"))
     r.add_argument("--steps", type=int, default=2500); r.add_argument("--batch", type=int, default=64)

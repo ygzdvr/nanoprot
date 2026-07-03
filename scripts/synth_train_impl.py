@@ -127,11 +127,47 @@ class SSMBlock(nn.Module):
         return x + self.mlp(self.n2(x))
 
 
+def _init_mamba_block(blk, cfg, std=0.02):
+    """Apply the real Mamba init recipe to a bare MambaBlock (the class defaults A_log/D to zeros and
+    dt_proj.bias to nn.Linear default -> softplus~0.7 -> 1-step memory; without this the faithful block
+    would be crippled exactly like the minimal SSM was)."""
+    nn.init.normal_(blk.in_proj.weight, std=std); nn.init.normal_(blk.x_proj.weight, std=std)
+    nn.init.normal_(blk.out_proj.weight, std=std); nn.init.normal_(blk.dt_proj.weight, std=std)
+    lo, hi = math.log(cfg.dt_min), math.log(cfg.dt_max)
+    dt = torch.exp(torch.empty(blk.D_inner).uniform_() * (hi - lo) + lo).clamp(min=cfg.dt_init_floor)
+    blk.dt_proj.bias.data.copy_(dt + torch.log(-torch.expm1(-dt)))            # softplus^-1
+    nn.init.normal_(blk.conv1d.weight, std=std); nn.init.zeros_(blk.conv1d.bias)
+    n = torch.arange(1, cfg.d_state + 1, dtype=torch.float32)                  # S4D-real A = -(1..N)
+    blk.A_log.data.copy_(torch.log(n.unsqueeze(0).expand(blk.D_inner, -1)).contiguous())
+    nn.init.ones_(blk.D)
+
+
+class MambaMixerBlock(nn.Module):
+    """The FAITHFUL real-Mamba mixer (nanoprot.models.mamba.MambaBlock: depthwise causal conv1d +
+    expand=2 + input-dependent dt/B/C, properly initialized) wrapped with the same ReLU^2 MLP as
+    AttnBlock, so the attn-vs-mamba comparison isolates the MIXER's inductive bias. This is the
+    real-Mamba diagnostic: does a faithful selective SSM (with the conv1d + expand the minimal SSMBlock
+    lacked) win early on ordered/periodic tasks, or does attention still lead (-> mechanism is
+    pretraining-specific, not a supervised-learning-speed effect)?"""
+    def __init__(self, d, ratio=3, n_state=16, d_conv=4, expand=2):
+        super().__init__()
+        from nanoprot.models.mamba import MambaBlock, MambaConfig
+        self.n1, self.n2 = RMSNorm(d), RMSNorm(d)
+        cfg = MambaConfig(n_embd=d, d_state=n_state, d_conv=d_conv, expand=expand,
+                          dt_rank=max(d // 16, 1), sequence_len=SEQ_LEN, vocab_size=N_TOK)
+        self.mixer = MambaBlock(cfg); _init_mamba_block(self.mixer, cfg)
+        self.mlp = MLP(d, ratio)
+
+    def forward(self, x):
+        x = x + self.mixer(self.n1(x))
+        return x + self.mlp(self.n2(x))
+
+
 class SeqModel(nn.Module):
     def __init__(self, arch, d=96, n_layer=3, n_head=4, n_state=16):
         super().__init__()
         self.emb = nn.Embedding(N_TOK, d)
-        blk = AttnBlock if arch == "attn" else SSMBlock
+        blk = {"attn": AttnBlock, "ssm": SSMBlock, "mamba": MambaMixerBlock}[arch]
         kw = {"n_head": n_head} if arch == "attn" else {"n_state": n_state}
         self.blocks = nn.ModuleList([blk(d, **kw) for _ in range(n_layer)])
         self.nf = RMSNorm(d); self.head = nn.Linear(d, C_CLASSES)
@@ -147,6 +183,9 @@ def flops_per_token(arch, d=96, n_layer=3, L=SEQ_LEN, ratio=3, n_state=16):
     mlp = 4 * ratio * d * d
     if arch == "attn":
         core = 4 * d * d + 2 * L * d           # qkvo proj + context (scores+AV) amortized per token
+    elif arch == "mamba":
+        di = 2 * d                             # expand=2: in/out proj + conv + per-token scan
+        core = 6 * d * d + di * 4 + 6 * di * n_state
     else:
         core = (2 * d * d) + (2 * d * n_state) + (d * d) + 4 * d * n_state  # in/out proj + B/C + scan
     return n_layer * (core + mlp) * 2          # *2 for MAC->FLOP; fwd; training ~3x but constant cancels

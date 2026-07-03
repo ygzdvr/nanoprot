@@ -72,7 +72,10 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=Path("docs/figures/synth_selectivity_law"))
     ap.add_argument("--acq-frac", type=float, default=0.5, help="acquisition threshold (chance->converged)")
     ap.add_argument("--n-boot", type=int, default=5000)
+    ap.add_argument("--archs", nargs=2, default=["attn", "ssm"],
+                    help="the (late-winner, early-winner-hypothesis) arch pair; d = A0 - A1")
     args = ap.parse_args()
+    A0, A1 = args.archs
 
     import json
     spec = json.loads(args.spec.read_text())
@@ -80,17 +83,19 @@ def main() -> int:
     tasks = sorted(C)
     rec = {}
     for t in tasks:
-        A, S = seed_mean(C[t]["attn"]), seed_mean(C[t]["ssm"])
+        if A0 not in C[t] or A1 not in C[t]:
+            continue
+        A, S = seed_mean(C[t][A0]), seed_mean(C[t][A1])
         steps = sorted(set(A) & set(S))
         if len(steps) < 4:
             continue
         chance = 0.5 * (A[steps[0]] + S[steps[0]]); fin = 0.5 * (A[steps[-1]] + S[steps[-1]])
         thr = chance + args.acq_frac * (fin - chance)
         t_acq = next((st for st in steps if 0.5 * (A[st] + S[st]) >= thr), steps[len(steps) // 3])
-        seeds = sorted(set(C[t]["attn"]) & set(C[t]["ssm"]))
+        seeds = sorted(set(C[t][A0]) & set(C[t][A1]))
         de, dfin, convF = [], [], []
         for s in seeds:
-            ca, cs = C[t]["attn"][s], C[t]["ssm"][s]
+            ca, cs = C[t][A0][s], C[t][A1][s]
             if len(ca) < 4 or len(cs) < 4:
                 continue
             ka = min(ca, key=lambda k: abs(k - t_acq)); ks = min(cs, key=lambda k: abs(k - t_acq))
@@ -144,7 +149,7 @@ def main() -> int:
             ax.annotate(t.replace("_", ""), (xx, rec[t]["d_early"]), fontsize=5.6, xytext=(3, 2),
                         textcoords="offset points")
         ax.axhline(0, color="0.6", lw=0.8, ls="--"); ax.set_xlabel(xl)
-        ax.set_ylabel(r"early margin $\Delta=F_1^{\mathrm{attn}}-F_1^{\mathrm{ssm}}$ (<0: ssm early)")
+        ax.set_ylabel(rf"early margin $\Delta=F_1^{{\mathrm{{{A0}}}}}-F_1^{{\mathrm{{{A1}}}}}$ (<0: {A1} early)")
     mm = np.polyfit(x, y, 1); xs = np.linspace(x.min(), x.max(), 40)
     a.plot(xs, np.polyval(mm, xs), color="0.3", lw=1.3, zorder=1)
     a.set_title(f"controlled law (matched step)\nr={rp:+.2f} (p={perm_p(x, y, pearson):.3f}), "
@@ -154,7 +159,7 @@ def main() -> int:
     a.legend(handles=[ml.Line2D([], [], marker="o", ls="", color=v, label=k) for k, v in AXIS_COLOR.items()],
              fontsize=6, loc="best", frameon=False)
     trev = min(ts, key=lambda t: rec[t]["d_early"])
-    for arch, c in (("attn", "#3B6FB6"), ("ssm", "#C0473B")):
+    for arch, c in ((A0, "#3B6FB6"), (A1, "#C0473B")):
         m = seed_mean(C[trev][arch]); pts = sorted(m.items())
         cp.plot([p[0] for p in pts], [p[1] for p in pts], color=c, lw=1.6, label=arch, marker="o", ms=2)
     cp.axvline(rec[trev]["t_acq"], color="0.6", ls=":", lw=0.8)

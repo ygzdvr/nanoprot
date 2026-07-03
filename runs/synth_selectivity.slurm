@@ -31,9 +31,11 @@ NANOPROT_REPO="${NANOPROT_REPO:-/scratch/gpfs/EHAZAN/hd0216/Senior-Thesis/scalin
 NANOPROT_VENV="${NANOPROT_VENV:-/scratch/gpfs/EHAZAN/hd0216/Senior-Thesis/scaling/nanochat/NEW-REPO/nanochat/.venv}"
 export NANOPROT_BASE_DIR="${NANOPROT_BASE_DIR:-$NANOPROT_REPO/.cache/nanoprot}"
 
-TASKS=(comp_R2 comp_R6 ratio order_adj motif_R2 motif_R4 period_4 period_8 period_16 aperiodic)
-ARCHS=(attn ssm)
-SEEDS=(0 1 2 3 4)
+# TASKS / ARCHS / SEEDS are env-overridable (space-separated) so the same script serves the full sweep
+# and focused diagnostics, e.g.  ARCHS='mamba' sbatch --array=0-49 ... runs/synth_selectivity.slurm
+read -ra TASKS <<< "${TASKS:-comp_R2 comp_R6 ratio order_adj motif_R2 motif_R4 period_4 period_8 period_16 aperiodic}"
+read -ra ARCHS <<< "${ARCHS:-attn ssm}"
+read -ra SEEDS <<< "${SEEDS:-0 1 2 3 4}"
 STEPS="${STEPS:-2000}"
 
 NT=${#TASKS[@]}; NA=${#ARCHS[@]}; NS=${#SEEDS[@]}
