@@ -85,7 +85,7 @@ class SSMBlock(nn.Module):
     """Minimal SELECTIVE diagonal SSM: input-dependent step size dt and output gate (the 'selective'
     essence of Mamba), diagonal state transition, causal sequential scan. State size = n_state per
     channel-group; we keep it channel-diagonal (one scalar state per model dim) for minimality."""
-    def __init__(self, d, ratio=3, n_state=16):
+    def __init__(self, d, ratio=3, n_state=16, dt_min=0.001, dt_max=0.1):
         super().__init__()
         self.n1, self.n2 = RMSNorm(d), RMSNorm(d)
         self.ns = n_state
@@ -93,9 +93,16 @@ class SSMBlock(nn.Module):
         self.dt_proj = nn.Linear(d, d)                     # input-dependent log-step
         self.B_proj = nn.Linear(d, n_state)                # input-dependent input matrix
         self.C_proj = nn.Linear(d, n_state)                # input-dependent output matrix
-        self.A_log = nn.Parameter(torch.log(torch.linspace(1, n_state, n_state)).repeat(d, 1))  # [d, ns]
+        self.A_log = nn.Parameter(torch.log(torch.arange(1, n_state + 1).float()).repeat(d, 1))  # [d,ns] S4D-real
         self.D = nn.Parameter(torch.ones(d))
         self.out = nn.Linear(d, d); self.mlp = MLP(d, ratio)
+        # --- Mamba/S4 dt initialization (THE fix): without this dt~0.7 collapses the state memory to
+        # ~1 step and the recurrence cannot count/track phase. Init dt_proj.bias so softplus(bias) is
+        # log-uniform in [dt_min, dt_max], and keep dt_proj.weight tiny so early dt ~= that bias.
+        nn.init.uniform_(self.dt_proj.weight, -1e-3, 1e-3)
+        dt = torch.exp(torch.rand(d) * (math.log(dt_max) - math.log(dt_min)) + math.log(dt_min))
+        dt = dt.clamp(min=1e-4)
+        self.dt_proj.bias.data = dt + torch.log(-torch.expm1(-dt))   # inverse softplus so softplus(bias)=dt
 
     def _scan(self, xin, dt, Bm, Cm):
         # xin,[B,L,d]; dt,[B,L,d]; Bm,Cm,[B,L,ns]
