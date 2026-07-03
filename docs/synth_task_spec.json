@@ -1,0 +1,126 @@
+{
+  "comp_R2": {
+    "fn": "comp_R2",
+    "kwargs": {
+      "R": 2
+    },
+    "eps": 0.15,
+    "bayes_ceiling": 0.8875,
+    "omega": 0.1381,
+    "pi": 1.5929,
+    "f1_ord": 0.4919,
+    "f1_bag": 0.3539,
+    "axis": "composition"
+  },
+  "comp_R6": {
+    "fn": "comp_R6",
+    "kwargs": {
+      "R": 6
+    },
+    "eps": 0.15,
+    "bayes_ceiling": 0.8875,
+    "omega": -0.008,
+    "pi": 1.572,
+    "f1_ord": 0.459,
+    "f1_bag": 0.467,
+    "axis": "composition"
+  },
+  "ratio": {
+    "fn": "ratio",
+    "kwargs": {},
+    "eps": 0.15,
+    "bayes_ceiling": 0.8875,
+    "omega": 0.0546,
+    "pi": 1.3744,
+    "f1_ord": 0.4013,
+    "f1_bag": 0.3467,
+    "axis": "composition"
+  },
+  "order_adj": {
+    "fn": "order_adj",
+    "kwargs": {},
+    "eps": 0.15,
+    "bayes_ceiling": 0.8875,
+    "omega": 0.2412,
+    "pi": 1.0195,
+    "f1_ord": 0.5606,
+    "f1_bag": 0.3194,
+    "axis": "order"
+  },
+  "motif_R2": {
+    "fn": "motif_R2",
+    "kwargs": {
+      "R": 2
+    },
+    "eps": 0.15,
+    "bayes_ceiling": 0.8875,
+    "omega": 0.4916,
+    "pi": 1.0067,
+    "f1_ord": 0.8913,
+    "f1_bag": 0.3997,
+    "axis": "order"
+  },
+  "motif_R4": {
+    "fn": "motif_R4",
+    "kwargs": {
+      "R": 4
+    },
+    "eps": 0.15,
+    "bayes_ceiling": 0.8875,
+    "omega": 0.484,
+    "pi": 1.0071,
+    "f1_ord": 0.8893,
+    "f1_bag": 0.4053,
+    "axis": "order"
+  },
+  "period_4": {
+    "fn": "period_4",
+    "kwargs": {
+      "p": 4
+    },
+    "eps": 0.15,
+    "bayes_ceiling": 0.8875,
+    "omega": 0.1765,
+    "pi": 4.1981,
+    "f1_ord": 0.4317,
+    "f1_bag": 0.2552,
+    "axis": "period"
+  },
+  "period_8": {
+    "fn": "period_8",
+    "kwargs": {
+      "p": 8
+    },
+    "eps": 0.15,
+    "bayes_ceiling": 0.8875,
+    "omega": 0.1687,
+    "pi": 3.4315,
+    "f1_ord": 0.4525,
+    "f1_bag": 0.2838,
+    "axis": "period"
+  },
+  "period_16": {
+    "fn": "period_16",
+    "kwargs": {
+      "p": 16
+    },
+    "eps": 0.15,
+    "bayes_ceiling": 0.8875,
+    "omega": 0.1405,
+    "pi": 3.2532,
+    "f1_ord": 0.4232,
+    "f1_bag": 0.2827,
+    "axis": "period"
+  },
+  "aperiodic": {
+    "fn": "aperiodic",
+    "kwargs": {},
+    "eps": 0.15,
+    "bayes_ceiling": 0.8875,
+    "omega": 0.0,
+    "pi": 1.0114,
+    "f1_ord": 0.9019,
+    "f1_bag": 0.9019,
+    "axis": "off-diag (strong, aperiodic)"
+  }
+}
