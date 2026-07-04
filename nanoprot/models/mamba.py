@@ -420,10 +420,13 @@ class Mamba(nn.Module):
             non_matmul += blk.A_log.numel() + blk.D.numel()
             non_matmul += sum(p.numel() for p in resblock.norm.parameters())
         cfg = self.config
-        # Selective SSM scan: per token O(D_inner * N) for h update + C dot,
-        # times sequence length.
+        # Selective SSM scan: PER TOKEN it is O(D_inner * N) for the h update + C dot (the recurrence
+        # does constant work per token — NO sequence-length factor). estimate_flops returns FLOPs *per
+        # token* (see gpt2.GPT.estimate_flops), so multiplying by cfg.sequence_len here was a bug: it
+        # inflated mamba's per-token FLOPs ~2.6x (the scan term became ~60% of the total) and made mamba
+        # look ~3.3x more FLOP-expensive than gpt2 when the two are actually comparable. Fixed.
         D_inner = cfg.expand * cfg.n_embd
-        scan_flops = 6 * D_inner * cfg.d_state * cfg.sequence_len * cfg.n_layer
+        scan_flops = 6 * D_inner * cfg.d_state * cfg.n_layer
         return 6 * (nparams - non_matmul) + scan_flops
 
     # -- forward ------------------------------------------------------------
