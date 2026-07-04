@@ -329,6 +329,8 @@ def main() -> int:
     r.add_argument("--out", type=Path, default=Path(".cache/nanoprot/synth_results/curves.csv"))
     r.add_argument("--steps", type=int, default=2500); r.add_argument("--batch", type=int, default=64)
     r.add_argument("--d-model", type=int, default=96); r.add_argument("--device", default=None)
+    r.add_argument("--corrected", action="store_true", help="real MuonAdamW + frozen middle-layer probe")
+    r.add_argument("--probe-layer", type=int, default=1, help="block index for the frozen probe")
     s = sub.add_parser("smoke")
     args = ap.parse_args()
 

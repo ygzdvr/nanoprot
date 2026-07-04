@@ -178,6 +178,16 @@ class SeqModel(nn.Module):
             h = b(h)
         return self.head(self.nf(h))
 
+    def features(self, x, layer):
+        """Residual stream after block index `layer` — the frozen linear-probe target, matching the
+        natural-data protocol (probe a middle-layer residual, NOT read the trained output head)."""
+        h = self.emb(x)
+        for i, b in enumerate(self.blocks):
+            h = b(h)
+            if i == layer:
+                return h
+        return h
+
 
 def flops_per_token(arch, d=96, n_layer=3, L=SEQ_LEN, ratio=3, n_state=16):
     mlp = 4 * ratio * d * d
@@ -253,10 +263,109 @@ def train_curve(arch, task, seed, *, steps=2500, batch=64, d=96, device="cpu", e
     return rows, n_param
 
 
+def make_optimizer(model, d):
+    """The real nanoprot recipe (Muon for 2-D matrix weights + AdamW per-group, muP LR scaling) applied
+    to the minimal SeqModel — so attn-vs-mamba uses the SAME optimizer the natural-data reversal was
+    established under, not a generic single-LR AdamW. Mirrors Mamba/GPT.setup_optimizer classification."""
+    from nanoprot.optim import MuonAdamW
+    scale = (d / 768) ** -0.5
+    muon, emb, head, misc, scal = [], [], [], [], []
+    for n, p in model.named_parameters():
+        if not p.requires_grad:
+            continue
+        if n.startswith("emb"):
+            emb.append(p)
+        elif n.startswith("head"):
+            head.append(p)
+        elif ("A_log" in n) or n.endswith(".D") or n.endswith(".w"):   # SSM selectivity scalars + RMSNorm
+            scal.append(p)
+        elif "conv1d" in n:
+            misc.append(p)                                             # depthwise conv (3-D) -> AdamW
+        elif p.ndim == 2:
+            muon.append(p)
+        else:
+            misc.append(p)                                            # biases / 1-D
+    g = []
+    if emb:  g.append(dict(kind="adamw", params=emb,  lr=0.2 * scale,   betas=(0.8, 0.995), eps=1e-10, weight_decay=0.001))
+    if head: g.append(dict(kind="adamw", params=head, lr=0.004 * scale, betas=(0.8, 0.96),  eps=1e-10, weight_decay=0.01))
+    if misc: g.append(dict(kind="adamw", params=misc, lr=0.02 * scale,  betas=(0.9, 0.95),  eps=1e-10, weight_decay=0.0))
+    if scal: g.append(dict(kind="adamw", params=scal, lr=0.005,         betas=(0.8, 0.95),  eps=1e-10, weight_decay=0.0))
+    for shape in sorted({tuple(p.shape) for p in muon}):
+        g.append(dict(kind="muon", params=[p for p in muon if tuple(p.shape) == shape],
+                      lr=0.02, momentum=0.95, ns_steps=5, beta2=0.9, weight_decay=0.0))
+    opt = MuonAdamW(g)
+    for grp in opt.param_groups:
+        grp["initial_lr"] = grp["lr"]
+    return opt
+
+
+def ridge_probe_f1(feats, labels, n_classes, *, lam=10.0, seed=0, cap=20000):
+    """Macro-F1 of a linear ridge probe of `labels` from FROZEN features [N,d] — the natural protocol's
+    decodability measure (not the trained head)."""
+    rng = np.random.default_rng(seed)
+    v = labels != IGNORE
+    feats, labels = feats[v], labels[v]
+    n = len(labels)
+    if n < 50 or len(set(labels.tolist())) < 2:
+        return float("nan")
+    if n > cap:
+        idx = rng.choice(n, cap, replace=False); feats, labels, n = feats[idx], labels[idx], cap
+    perm = rng.permutation(n); cut = n * 3 // 4
+    Xtr, ytr, Xte, yte = feats[perm[:cut]], labels[perm[:cut]], feats[perm[cut:]], labels[perm[cut:]]
+    Xtr = np.hstack([Xtr, np.ones((len(Xtr), 1))]); Xte = np.hstack([Xte, np.ones((len(Xte), 1))])
+    Y = np.zeros((len(ytr), n_classes)); Y[np.arange(len(ytr)), ytr] = 1.0
+    W = np.linalg.solve(Xtr.T @ Xtr + lam * np.eye(Xtr.shape[1]), Xtr.T @ Y)
+    return macro_f1((Xte @ W).argmax(1), yte)
+
+
+def train_curve_corrected(arch, task, seed, *, steps=2000, batch=64, d=96, device="cpu", eps=EPS,
+                          probe_layer=1):
+    """CONFOUND-CORRECTED synthetic run: real MuonAdamW optimizer + frozen middle-layer linear-probe
+    decodability (vs generic-AdamW + trained-head-accuracy in train_curve). Still supervised — isolates
+    the OPTIMIZER and MEASUREMENT confounds; the objective (supervised vs LM) is the remaining one."""
+    torch.manual_seed(seed); np.random.seed(seed)
+    dev = torch.device(device)
+    model = SeqModel(arch, d=d).to(dev)
+    n_param = sum(p.numel() for p in model.parameters())
+    opt = make_optimizer(model, d)
+    warmup = max(1, int(0.05 * steps))
+    xv, yv = make_dataset(task, 512, SEQ_LEN, seed + 10007, eps=eps)
+    xv_t = torch.tensor(xv, device=dev)
+    fpt = flops_per_token(arch, d=d); evs = set(eval_steps(steps)); rows = []; gen = _rng(seed + 1)
+
+    def evaluate(step):
+        model.eval()
+        with torch.no_grad():
+            feats = model.features(xv_t, probe_layer).float().cpu().numpy()
+        model.train()
+        f1 = ridge_probe_f1(feats.reshape(-1, feats.shape[-1]), yv.reshape(-1), C_CLASSES)
+        rows.append({"arch": arch, "task": task, "seed": seed, "step": step,
+                     "flop": fpt * batch * SEQ_LEN * step, "val_f1": round(f1, 5), "n_param": n_param})
+
+    if 0 in evs:
+        evaluate(0)
+    for step in range(1, steps):
+        for grp in opt.param_groups:
+            grp["lr"] = grp["initial_lr"] * min(1.0, step / warmup)
+        xb, yb = make_dataset(task, batch, SEQ_LEN, int(gen.integers(1 << 30)), eps=eps)
+        logits = model(torch.tensor(xb, device=dev))
+        loss = F.cross_entropy(logits.reshape(-1, C_CLASSES), torch.tensor(yb, device=dev).reshape(-1),
+                               ignore_index=IGNORE)
+        opt.zero_grad(); loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        opt.step()
+        if step in evs:
+            evaluate(step)
+    return rows, n_param
+
+
 def run_cell(spec, args):
     dev = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
-    rows, n_param = train_curve(args.arch, args.task, args.seed, steps=args.steps,
-                                batch=args.batch, d=args.d_model, device=dev)
+    corrected = getattr(args, "corrected", False)
+    fn = train_curve_corrected if corrected else train_curve
+    kw = {"probe_layer": getattr(args, "probe_layer", 1)} if corrected else {}
+    rows, n_param = fn(args.arch, args.task, args.seed, steps=args.steps,
+                       batch=args.batch, d=args.d_model, device=dev, **kw)
     om, pi = spec[args.task]["omega"], spec[args.task]["pi"]
     for r in rows:
         r["omega"] = om; r["pi"] = pi

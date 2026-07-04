@@ -54,9 +54,11 @@ module purge; module load gcc/11 cudatoolkit/12.8 2>/dev/null || module load gcc
 source "$NANOPROT_VENV/bin/activate"
 cd "$NANOPROT_REPO"
 
-OUT="$NANOPROT_BASE_DIR/synth_results/cells/cell_${TASK}_${ARCH}_s${SEED}.csv"
+CELLDIR="${CELLDIR:-cells}"
+EXTRA=""; [ "${CORRECTED:-0}" = "1" ] && EXTRA="--corrected"    # real MuonAdamW + frozen middle-layer probe
+OUT="$NANOPROT_BASE_DIR/synth_results/$CELLDIR/cell_${TASK}_${ARCH}_s${SEED}.csv"
 mkdir -p "$(dirname "$OUT")"
-echo "[$ID/$TOTAL] task=$TASK arch=$ARCH seed=$SEED steps=$STEPS -> $OUT"
+echo "[$ID/$TOTAL] task=$TASK arch=$ARCH seed=$SEED steps=$STEPS corrected=${CORRECTED:-0} -> $OUT"
 python -m scripts.synth_selectivity run --task "$TASK" --arch "$ARCH" --seed "$SEED" \
-    --steps "$STEPS" --out "$OUT"
+    --steps "$STEPS" --out "$OUT" $EXTRA
 echo "[done] $TASK/$ARCH/s$SEED"
