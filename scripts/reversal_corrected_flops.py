@@ -25,31 +25,45 @@ from scripts.iso_x_robustness import AR, interp, load_raw
 
 
 def corrected_fpt_lookup(release_dir: Path):
-    """(arch,scale,seed) -> (fpt_buggy, fpt_corrected). Gate-checked against the logged flops_per_token."""
+    """(arch,scale,seed) -> (fpt_buggy, fpt_corrected). Gate-checked against the logged flops_per_token.
+
+    Handles BOTH the protein release ('nanoprot-<arch>-<scale>-s<seed>') and the genome training dir
+    ('genome-...'), because mamba's corrected FLOPs/token are context-dependent only weakly (dominated by
+    6*n_params) while gpt2's are strongly context-dependent (attention grows with seq_len) -- so the
+    genome axis MUST use genome configs, not protein ones. It also handles a dir that MIXES pre-fix metas
+    (buggy fpt with the scan seq_len factor) and post-fix metas (already-corrected fpt emitted by the
+    patched mamba.estimate_flops): a per-meta guard (fpt > 1.5*6*n_params <=> the huge O(L) scan term is
+    still present) decides whether to apply the correction, so new corrected seeds are never re-corrected.
+    """
     lut, gate_max_err = {}, 0.0
-    for d in sorted(glob.glob(str(release_dir / "nanoprot-*-*-s*"))):
-        name = Path(d).name.split("nanoprot-", 1)[1]           # e.g. mamba-M-s0
-        parts = name.rsplit("-", 2)
-        if len(parts) != 3:
-            continue
-        arch, scale, seedtok = parts
-        if arch not in AR or scale not in ("XS", "S", "M", "L"):
-            continue
-        seed = seedtok.lstrip("s")
-        metas = sorted(glob.glob(str(Path(d) / "meta_*.json")))
-        if not metas:
-            continue
-        m = json.load(open(metas[-1]))
-        fpt = float(m["flops_per_token"]); cfg = m["model_config"]
-        if arch == "mamba":
-            L = int(cfg["max_seq_len"]); d_inner = cfg["expand"] * cfg["d_model"]
-            scan_bug = 6 * d_inner * cfg["d_state"] * L * cfg["depth"]
-            recon = 6 * int(m["n_params"]) + scan_bug            # gate (~fpt within non_matmul slack)
-            gate_max_err = max(gate_max_err, abs(recon - fpt) / fpt)
-            fpt_corr = fpt - scan_bug * (L - 1) / L
-        else:
-            fpt_corr = fpt                                       # gpt2: no scan bug
-        lut[(arch, scale, seed)] = (fpt, fpt_corr)
+    for prefix in ("nanoprot-", "genome-"):
+        for d in sorted(glob.glob(str(release_dir / (prefix + "*-*-s*")))):
+            name = Path(d).name.split(prefix, 1)[1]            # e.g. mamba-M-s0
+            parts = name.rsplit("-", 2)
+            if len(parts) != 3:
+                continue
+            arch, scale, seedtok = parts
+            if arch not in AR or scale not in ("XS", "S", "M", "L"):
+                continue
+            seed = seedtok.lstrip("s")
+            metas = sorted(glob.glob(str(Path(d) / "meta_*.json")))
+            if not metas:
+                continue
+            m = json.load(open(metas[-1]))
+            fpt = float(m["flops_per_token"]); cfg = m["model_config"]; npar = int(m["n_params"])
+            if arch == "mamba":
+                L = int(cfg["max_seq_len"]); d_inner = cfg["expand"] * cfg["d_model"]
+                scan_bug = 6 * d_inner * cfg["d_state"] * L * cfg["depth"]
+                if fpt > 1.5 * 6 * npar:                        # pre-fix meta: O(L) scan term still present
+                    recon = 6 * npar + scan_bug                 # gate (~fpt within non_matmul slack)
+                    gate_max_err = max(gate_max_err, abs(recon - fpt) / fpt)
+                    fpt_buggy, fpt_corr = fpt, fpt - scan_bug * (L - 1) / L
+                else:                                           # post-fix meta: fpt already corrected
+                    fpt_corr = fpt
+                    fpt_buggy = fpt + scan_bug * (L - 1) / L     # reconstruct buggy value for the buggy axis
+            else:
+                fpt_buggy = fpt_corr = fpt                       # gpt2: no scan bug
+            lut[(arch, scale, seed)] = (fpt_buggy, fpt_corr)
     return lut, gate_max_err
 
 
