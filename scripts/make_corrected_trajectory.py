@@ -32,16 +32,19 @@ def main() -> int:
           f"({'PASS' if gate_err < 0.02 else 'FAIL — abort'})")
     if gate_err >= 0.02:
         return 1
-    # ratio[(arch,scale)] = fpt_corr/fpt_buggy, seed-averaged (identical across seeds by construction)
-    ratio = {}
+    # cfpt[(arch,scale)] = corrected flops/token (deterministic per arch/scale; identical across seeds).
+    # We OVERWRITE train_flops = cfpt * train_residues rather than multiply by a ratio, so the result is
+    # correct whether a row logged BUGGY flops (old seeds 0-2) or already-CORRECTED flops (new seeds 3-9,
+    # trained with the fixed code) -- a ratio-multiply would double-correct the new seeds.
+    cfpt = {}
     byas = defaultdict(list)
     for (a, s, seed), (fb, fc) in lut.items():
-        byas[(a, s)].append(fc / fb)
+        byas[(a, s)].append(fc)
     for k, vs in byas.items():
-        ratio[k] = st.mean(vs)
-    print("  correction ratio (train_flops *= ratio):")
-    for k in sorted(ratio):
-        print(f"    {k[0]:5s} {k[1]}: {ratio[k]:.4f}")
+        cfpt[k] = st.mean(vs)
+    print("  corrected flops/token (train_flops := cfpt * train_residues; OVERWRITE, not multiply):")
+    for k in sorted(cfpt):
+        print(f"    {k[0]:5s} {k[1]}: {cfpt[k]:.4e}")
 
     for d in args.dirs:
         src = Path(d)
@@ -58,8 +61,8 @@ def main() -> int:
                 shutil.copy(fn, dst / fn.name); n_files += 1; continue
             for r in rows:
                 k = (r["arch"], r["scale"])
-                if k in ratio and ratio[k] != 1.0:
-                    r["train_flops"] = f"{float(r['train_flops']) * ratio[k]:.6e}"; n_scaled += 1
+                if k in cfpt:
+                    r["train_flops"] = f"{cfpt[k] * float(r['train_residues']):.6e}"; n_scaled += 1
             with (dst / fn.name).open("w", newline="") as fh:
                 w = csv.DictWriter(fh, fieldnames=list(rows[0].keys())); w.writeheader(); w.writerows(rows)
             n_files += 1
