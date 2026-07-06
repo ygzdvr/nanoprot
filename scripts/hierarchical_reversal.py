@@ -133,11 +133,12 @@ def analyze_modality(results_dir: Path, scales, early_frac, label):
         ax.plot([lo, hi], [row, row], color=col, lw=2.2, solid_capstyle="round")
         ax.plot(te.mean(), row, "o", color=col, ms=4, zorder=3)
         hl = cells[i].split("/")[0] in ("ss3", "ss8", "fold", "frame")
-        ax.text(max(hi, 0) + 0.006, row, f"{cells[i]}  P={p:.2f}", va="center",
+        ax.text(max(hi, 0) + 0.006, row, f"{cells[i]}  n={len(Ye[cells[i]])}  P={p:.2f}", va="center",
                 fontsize=6.2, fontweight="bold" if hl else "normal", color="0.15" if hl else "0.4")
     ax.axvline(0, color="0.5", ls="--", lw=0.9); ax.set_yticks([]); ax.set_ylim(-0.7, len(cells) - 0.3)
     ax.set_xlabel(r"early margin $\theta_{\mathrm{early}}=\mathrm{gpt2}-\mathrm{mamba}$  (95% posterior CrI)")
-    ax.set_title(f"{label}: hierarchical reversal posterior\n(partial pooling, {int(np.mean([len(Ye[c]) for c in cells]))} seeds/cell; "
+    ns = [len(Ye[c]) for c in cells]; nrange = f"{min(ns)}" if min(ns) == max(ns) else f"{min(ns)}–{max(ns)}"
+    ax.set_title(f"{label}: hierarchical reversal posterior\n(partial pooling, {nrange} seeds/cell; "
                  f"red $P{{\\geq}}0.9$, orange $\\geq0.5$, blue $<0.5$)", fontsize=7.5)
     fig.tight_layout()
     Path("docs/figures").mkdir(parents=True, exist_ok=True)
