@@ -1,0 +1,15 @@
+name	arch	scale	seed	depth	d_model	vocab	ctx	est_params	num_iter_est
+genome-gpt2-M-s3	gpt2	M	3	14	896	10	1024	134953728	3088
+genome-gpt2-M-s4	gpt2	M	4	14	896	10	1024	134953728	3088
+genome-gpt2-M-s5	gpt2	M	5	14	896	10	1024	134953728	3088
+genome-gpt2-M-s6	gpt2	M	6	14	896	10	1024	134953728	3088
+genome-gpt2-M-s7	gpt2	M	7	14	896	10	1024	134953728	3088
+genome-gpt2-M-s8	gpt2	M	8	14	896	10	1024	134953728	3088
+genome-gpt2-M-s9	gpt2	M	9	14	896	10	1024	134953728	3088
+genome-mamba-M-s3	mamba	M	3	18	1152	10	1024	150649344	3448
+genome-mamba-M-s4	mamba	M	4	18	1152	10	1024	150649344	3448
+genome-mamba-M-s5	mamba	M	5	18	1152	10	1024	150649344	3448
+genome-mamba-M-s6	mamba	M	6	18	1152	10	1024	150649344	3448
+genome-mamba-M-s7	mamba	M	7	18	1152	10	1024	150649344	3448
+genome-mamba-M-s8	mamba	M	8	18	1152	10	1024	150649344	3448
+genome-mamba-M-s9	mamba	M	9	18	1152	10	1024	150649344	3448

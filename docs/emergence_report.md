@@ -32,6 +32,50 @@
 |  ↳ gpt2−mamba onset @ M | | -7 steps (gpt2 earlier) | | | | |
 |  ↳ gpt2−mamba onset @ L | | +3 steps (mamba earlier) | | | | |
 
+## ec_class / swissprot  (metric=macro_f1)
+
+| arch | scale | t_onset | t50 | t90 | Δ_final | AUEC |
+|------|-------|---------|-----|-----|---------|------|
+| gpt2 | S | 2 | 60 | 551 | +0.218 | +0.603 |
+| gpt2 | M | 2 | 408 | 1733 | +0.342 | +1.022 |
+| gpt2 | L | 3 | 792 | 6061 | +0.493 | +1.736 |
+| mamba | S | 13 | 264 | 553 | +0.176 | +0.167 |
+| mamba | M | 17 | 336 | 1919 | +0.304 | +0.779 |
+| mamba | L | 15 | 705 | 10842 | +0.426 | +1.318 |
+| esm2 | M | 1 | 1224 | 3016 | +0.229 | +0.293 |
+|  ↳ gpt2−mamba onset @ S | | -11 steps (gpt2 earlier) | | | | |
+|  ↳ gpt2−mamba onset @ M | | -14 steps (gpt2 earlier) | | | | |
+|  ↳ gpt2−mamba onset @ L | | -13 steps (gpt2 earlier) | | | | |
+
+## fold / cath  (metric=macro_f1)
+
+| arch | scale | t_onset | t50 | t90 | Δ_final | AUEC |
+|------|-------|---------|-----|-----|---------|------|
+| gpt2 | S | 3 | 136 | 543 | +0.404 | +1.046 |
+| gpt2 | M | 2 | 278 | 1839 | +0.513 | +1.792 |
+| gpt2 | L | 3 | 231 | 4432 | +0.609 | +2.805 |
+| mamba | S | 1 | 102 | 498 | +0.286 | +0.657 |
+| mamba | M | 2 | 179 | 2089 | +0.400 | +1.382 |
+| mamba | L | 2 | 238 | 11771 | +0.524 | +2.221 |
+|  ↳ gpt2−mamba onset @ S | | +2 steps (mamba earlier) | | | | |
+|  ↳ gpt2−mamba onset @ M | | +0 steps (mamba earlier) | | | | |
+|  ↳ gpt2−mamba onset @ L | | +1 steps (mamba earlier) | | | | |
+
+## pfam_family / swissprot  (metric=macro_f1)
+
+| arch | scale | t_onset | t50 | t90 | Δ_final | AUEC |
+|------|-------|---------|-----|-----|---------|------|
+| gpt2 | S | 5 | 208 | 543 | +0.342 | +0.761 |
+| gpt2 | M | 4 | 375 | 1286 | +0.419 | +1.286 |
+| gpt2 | L | 3 | 364 | 8219 | +0.536 | +2.023 |
+| mamba | S | 153 | 264 | 553 | +0.189 | +0.105 |
+| mamba | M | 1 | 276 | 2046 | +0.294 | +1.020 |
+| mamba | L | 4 | 284 | 12658 | +0.469 | +1.616 |
+| esm2 | M | 177 | 641 | 2164 | +0.328 | +0.415 |
+|  ↳ gpt2−mamba onset @ S | | -148 steps (gpt2 earlier) | | | | |
+|  ↳ gpt2−mamba onset @ M | | +2 steps (mamba earlier) | | | | |
+|  ↳ gpt2−mamba onset @ L | | -1 steps (gpt2 earlier) | | | | |
+
 ## rsa / netsurfp  (metric=r2)
 
 | arch | scale | t_onset | t50 | t90 | Δ_final | AUEC |
@@ -87,6 +131,21 @@
 |  ↳ gpt2−mamba onset @ S | | +1 steps (mamba earlier) | | | | |
 |  ↳ gpt2−mamba onset @ M | | -1 steps (gpt2 earlier) | | | | |
 |  ↳ gpt2−mamba onset @ L | | -71 steps (gpt2 earlier) | | | | |
+
+## subcellular / swissprot  (metric=macro_f1)
+
+| arch | scale | t_onset | t50 | t90 | Δ_final | AUEC |
+|------|-------|---------|-----|-----|---------|------|
+| gpt2 | S | 1 | 132 | 485 | +0.233 | +0.594 |
+| gpt2 | M | 2 | 77 | 245 | +0.244 | +1.201 |
+| gpt2 | L | 2 | 100 | 426 | +0.324 | +1.788 |
+| mamba | S | 32 | 86 | 192 | +0.165 | +0.400 |
+| mamba | M | 4 | 34 | 187 | +0.191 | +0.815 |
+| mamba | L | 3 | 95 | 4850 | +0.283 | +1.447 |
+| esm2 | M | 260 | 383 | 2415 | +0.107 | -0.066 |
+|  ↳ gpt2−mamba onset @ S | | -31 steps (gpt2 earlier) | | | | |
+|  ↳ gpt2−mamba onset @ M | | -2 steps (gpt2 earlier) | | | | |
+|  ↳ gpt2−mamba onset @ L | | -1 steps (gpt2 earlier) | | | | |
 
 ## transmembrane / swissprot  (metric=macro_f1)
 
